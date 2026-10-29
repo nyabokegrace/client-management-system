@@ -1,0 +1,54 @@
+# =============================================================================
+# render.yaml — Infrastructure-as-Code for Render.com
+# Docs: https://render.com/docs/yaml-spec
+# =============================================================================
+# Deploy a single Docker container containing Nginx + Django + Next.js.
+# =============================================================================
+
+services:
+  - name: client-management-system
+    type: web
+    runtime: docker
+
+    # Render builds the image from this Dockerfile at the repo root
+    dockerfilePath: ./Dockerfile
+
+    # Health check — Django login endpoint returns 405 (Method Not Allowed)
+    # on GET, which confirms the app is running.
+    healthCheckPath: /api/v1/auth/login/
+
+    # Free tier: Render spins down idle services; upgrade to avoid cold starts.
+    # plan: starter
+
+    envVars:
+      # ── Django core ──────────────────────────────────────────────────────────
+      - key: SECRET_KEY
+        # Generate with: python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+        value: REPLACE_WITH_A_STRONG_RANDOM_SECRET_KEY
+
+      - key: DEBUG
+        value: "False"
+
+      - key: ALLOWED_HOSTS
+        # Comma-separated list. Render provides *.onrender.com by default;
+        # add your custom domain here too.
+        value: "your-service-name.onrender.com,your-custom-domain.com"
+
+      # ── Database ─────────────────────────────────────────────────────────────
+      - key: DATABASE_URL
+        # Neon PostgreSQL connection string, e.g.:
+        # postgresql://user:password@ep-xxx.us-east-1.aws.neon.tech/dbname?sslmode=require
+        value: REPLACE_WITH_NEON_POSTGRESQL_CONNECTION_STRING
+
+      # ── CORS ─────────────────────────────────────────────────────────────────
+      - key: CORS_ALLOWED_ORIGINS
+        # Comma-separated list of allowed origins for the Django CORS headers.
+        # In production this should match your frontend domain.
+        value: "https://your-service-name.onrender.com,https://your-custom-domain.com"
+
+      # ── Next.js public ───────────────────────────────────────────────────────
+      - key: NEXT_PUBLIC_API_URL
+        # NOTE: NEXT_PUBLIC_* vars are embedded at build time.
+        # Since frontend and backend share the same domain via Nginx, you can
+        # use a relative base or the full public URL.
+        value: "https://your-service-name.onrender.com"
