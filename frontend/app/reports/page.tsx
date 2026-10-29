@@ -51,7 +51,7 @@ export default function ReportsPage() {
       const token = localStorage.getItem('siwolo_token');
       const res = await fetch(url, {
         headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(token ? { Authorization: `Token ${token}` } : {}),
         },
       });
       if (!res.ok) throw new Error('Export failed');
@@ -66,6 +66,7 @@ export default function ReportsPage() {
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
       console.error('Export error:', err);
+      alert('Failed to download report. Please try again.');
     } finally {
       setDownloadingType(null);
     }
