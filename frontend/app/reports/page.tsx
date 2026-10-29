@@ -7,7 +7,7 @@ import {
   Briefcase,
   Users,
   CheckSquare,
-  FileSpreadsheet,
+  FileText,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { api } from '../../lib/api';
@@ -26,6 +26,7 @@ export default function ReportsPage() {
     }[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [downloadingType, setDownloadingType] = useState<string | null>(null);
 
   const fetchReports = async () => {
     try {
@@ -43,67 +44,94 @@ export default function ReportsPage() {
     fetchReports();
   }, []);
 
-  const handleExport = (type: 'matters' | 'clients' | 'tasks') => {
-    const url = api.reports.getExportUrl(type);
-    window.open(url, '_blank');
+  const handleExport = async (type: 'matters' | 'clients' | 'tasks') => {
+    setDownloadingType(type);
+    try {
+      const url = api.reports.getExportUrl(type);
+      const token = localStorage.getItem('siwolo_token');
+      const res = await fetch(url, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `${type}_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Export error:', err);
+    } finally {
+      setDownloadingType(null);
+    }
   };
 
   return (
     <div className="flex-1 flex flex-col pb-12">
       <Header
         title="Reports & Analytics"
-        subtitle="Operational metrics, advocate caseloads, matters distribution and formatted CSV exports"
+        subtitle="Operational metrics, advocate caseloads, matters distribution and formatted PDF exports"
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Reports' }]}
         actions={
           <div className="flex items-center space-x-2">
             <button
               onClick={() => handleExport('matters')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-[#E5E7EB] hover:bg-gray-50 rounded transition-colors"
+              disabled={downloadingType === 'matters'}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-[#E5E7EB] hover:bg-gray-50 rounded transition-colors disabled:opacity-60"
             >
               <Download className="w-3.5 h-3.5 mr-1" />
-              Export Matters CSV
+              {downloadingType === 'matters' ? 'Downloading...' : 'Export Matters PDF'}
             </button>
             <button
               onClick={() => handleExport('clients')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-[#E5E7EB] hover:bg-gray-50 rounded transition-colors"
+              disabled={downloadingType === 'clients'}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-[#E5E7EB] hover:bg-gray-50 rounded transition-colors disabled:opacity-60"
             >
               <Download className="w-3.5 h-3.5 mr-1" />
-              Export Clients CSV
+              {downloadingType === 'clients' ? 'Downloading...' : 'Export Clients PDF'}
             </button>
           </div>
         }
       />
 
       <div className="px-6 py-6 space-y-6">
-        {/* Quick CSV Export Banner */}
+        {/* Quick PDF Export Banner */}
         <div className="bg-[#111111] text-white p-5 rounded flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold tracking-wide flex items-center">
-              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              <FileText className="w-4 h-4 mr-2" />
               Verified Database Export Center
             </h2>
             <p className="text-xs text-gray-400 mt-1">
-              Download clean, comma-separated records for partner meetings, auditing and firm administration.
+              Download formatted PDF reports for partner meetings, auditing and firm administration.
             </p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={() => handleExport('matters')}
-              className="px-3 py-1.5 text-xs bg-white text-black font-semibold rounded hover:bg-gray-200 transition-colors"
+              disabled={downloadingType === 'matters'}
+              className="px-3 py-1.5 text-xs bg-white text-black font-semibold rounded hover:bg-gray-200 transition-colors disabled:opacity-60"
             >
-              Matters (.csv)
+              {downloadingType === 'matters' ? 'Downloading...' : 'Matters (.pdf)'}
             </button>
             <button
               onClick={() => handleExport('clients')}
-              className="px-3 py-1.5 text-xs bg-[#222222] text-gray-200 border border-[#333333] font-semibold rounded hover:bg-[#333333] transition-colors"
+              disabled={downloadingType === 'clients'}
+              className="px-3 py-1.5 text-xs bg-[#222222] text-gray-200 border border-[#333333] font-semibold rounded hover:bg-[#333333] transition-colors disabled:opacity-60"
             >
-              Clients (.csv)
+              {downloadingType === 'clients' ? 'Downloading...' : 'Clients (.pdf)'}
             </button>
             <button
               onClick={() => handleExport('tasks')}
-              className="px-3 py-1.5 text-xs bg-[#222222] text-gray-200 border border-[#333333] font-semibold rounded hover:bg-[#333333] transition-colors"
+              disabled={downloadingType === 'tasks'}
+              className="px-3 py-1.5 text-xs bg-[#222222] text-gray-200 border border-[#333333] font-semibold rounded hover:bg-[#333333] transition-colors disabled:opacity-60"
             >
-              Tasks (.csv)
+              {downloadingType === 'tasks' ? 'Downloading...' : 'Tasks (.pdf)'}
             </button>
           </div>
         </div>

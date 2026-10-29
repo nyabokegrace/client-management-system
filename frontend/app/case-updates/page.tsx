@@ -58,8 +58,11 @@ export default function CaseUpdatesPage() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, [categoryFilter, matterFilter]);
+    const timer = setTimeout(() => {
+      fetchData();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [categoryFilter, matterFilter, searchTerm]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,15 +118,24 @@ export default function CaseUpdatesPage() {
       <div className="px-6 py-6 space-y-4">
         {/* Filters */}
         <div className="bg-white border border-[#E5E7EB] p-4 rounded flex flex-col md:flex-row items-center justify-between gap-3">
-          <form onSubmit={handleSearch} className="relative flex-1 w-full">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="Search updates by keyword, reference, title or notes..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-            />
+          <form onSubmit={handleSearch} className="relative flex-1 w-full flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search updates by keyword, reference, title or notes..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+            <button
+              type="submit"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors shrink-0"
+            >
+              <Search className="w-3.5 h-3.5 mr-1.5" />
+              Search
+            </button>
           </form>
 
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
