@@ -49,12 +49,34 @@ export default function ReportsPage() {
     try {
       const url = api.reports.getExportUrl(type);
       const token = localStorage.getItem('siwolo_token');
+      if (!token) {
+        alert('You are not logged in. Please log in again.');
+        setDownloadingType(null);
+        return;
+      }
       const res = await fetch(url, {
+        method: 'GET',
         headers: {
-          ...(token ? { Authorization: `Token ${token}` } : {}),
+          Authorization: `Token ${token}`,
+          Accept: 'application/pdf',
         },
+        credentials: 'same-origin',
       });
+      if (res.status === 401) {
+        alert('Session expired. Please log in again.');
+        throw new Error('Unauthorized');
+      }
+      if (res.status === 403) {
+        alert('You do not have permission to export reports.');
+        throw new Error('Forbidden');
+      }
       if (!res.ok) throw new Error('Export failed');
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('pdf')) {
+        const text = await res.text();
+        console.error('Unexpected response:', text);
+        throw new Error('Invalid file type');
+      }
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -66,7 +88,7 @@ export default function ReportsPage() {
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
       console.error('Export error:', err);
-      alert('Failed to download report. Please try again.');
+      alert('Failed to download report. Check browser console for details.');
     } finally {
       setDownloadingType(null);
     }
