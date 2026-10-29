@@ -25,6 +25,8 @@ export default function CaseUpdatesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [matterSearch, setMatterSearch] = useState('');
+  const [matterDropdownOpen, setMatterDropdownOpen] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -83,6 +85,8 @@ export default function CaseUpdatesPage() {
         event_datetime: new Date(formData.event_datetime).toISOString(),
       });
       setIsModalOpen(false);
+      setMatterSearch('');
+      setMatterDropdownOpen(false);
       setFormData({
         matter: 0,
         title: '',
@@ -236,29 +240,104 @@ export default function CaseUpdatesPage() {
       {/* Record Update Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => { setIsModalOpen(false); setMatterSearch(''); setMatterDropdownOpen(false); }}
         title="Record Case Progress Update"
         description="Add an immutable progress update to a matter's chronological record."
         maxWidth="lg"
       >
         <form onSubmit={handleRecordUpdate} className="space-y-4 text-xs">
-          <div>
+          <div className="relative">
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Select Legal Matter *
             </label>
-            <select
-              required
-              value={formData.matter}
-              onChange={(e) => setFormData({ ...formData, matter: Number(e.target.value) })}
-              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-            >
-              <option value={0}>— Select Matter —</option>
-              {matters.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.matter_reference} - {m.title}
-                </option>
-              ))}
-            </select>
+            {/* Searchable matter picker */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5 z-10" />
+              <input
+                type="text"
+                placeholder={
+                  formData.matter
+                    ? matters.find((m) => m.id === formData.matter)
+                        ? `${matters.find((m) => m.id === formData.matter)!.matter_reference} - ${matters.find((m) => m.id === formData.matter)!.title}`
+                        : 'Search matters...'
+                    : 'Search by reference or title...'
+                }
+                value={matterSearch}
+                onChange={(e) => {
+                  setMatterSearch(e.target.value);
+                  setMatterDropdownOpen(true);
+                  if (e.target.value === '') setFormData({ ...formData, matter: 0 });
+                }}
+                onFocus={() => setMatterDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMatterDropdownOpen(false), 150)}
+                className="w-full pl-9 pr-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black text-xs"
+              />
+              {/* Hidden native input for required validation */}
+              <input
+                type="number"
+                required
+                value={formData.matter || ''}
+                onChange={() => {}}
+                className="sr-only"
+                tabIndex={-1}
+              />
+            </div>
+
+            {/* Dropdown results */}
+            {matterDropdownOpen && (
+              <div className="absolute z-50 w-full mt-1 bg-white border border-[#E5E7EB] rounded shadow-lg max-h-48 overflow-y-auto">
+                {matters
+                  .filter((m) => {
+                    const q = matterSearch.toLowerCase();
+                    return (
+                      !q ||
+                      m.matter_reference.toLowerCase().includes(q) ||
+                      m.title.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onMouseDown={() => {
+                        setFormData({ ...formData, matter: m.id });
+                        setMatterSearch('');
+                        setMatterDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F9FAFB] transition-colors border-b border-gray-50 last:border-0 ${
+                        formData.matter === m.id ? 'bg-[#F9FAFB] font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-semibold text-[#111111]">{m.matter_reference}</span>
+                      <span className="text-gray-500 ml-2">— {m.title}</span>
+                    </button>
+                  ))}
+                {matters.filter((m) => {
+                  const q = matterSearch.toLowerCase();
+                  return !q || m.matter_reference.toLowerCase().includes(q) || m.title.toLowerCase().includes(q);
+                }).length === 0 && (
+                  <p className="px-3 py-3 text-xs text-gray-400 text-center">No matters found.</p>
+                )}
+              </div>
+            )}
+
+            {/* Show selected matter chip */}
+            {formData.matter > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="text-[11px] text-gray-500">Selected:</span>
+                <span className="text-[11px] font-semibold text-[#111111] bg-gray-100 px-2 py-0.5 rounded">
+                  {matters.find((m) => m.id === formData.matter)?.matter_reference} —{' '}
+                  {matters.find((m) => m.id === formData.matter)?.title}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setFormData({ ...formData, matter: 0 }); setMatterSearch(''); }}
+                  className="text-[11px] text-gray-400 hover:text-red-500 transition-colors ml-1"
+                >
+                  ✕ clear
+                </button>
+              </div>
+            )}
           </div>
 
           <div>
