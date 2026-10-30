@@ -1,3 +1,4 @@
+import os
 from io import BytesIO
 from django.http import HttpResponse
 from django.db.models import Count, Q
@@ -11,7 +12,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 
 from apps.clients.models import Client, ClientStatus, ClientType
 from apps.matters.models import Matter, MatterStatus
@@ -167,26 +168,54 @@ class ExportReportPDFView(APIView):
         title_style = ParagraphStyle(
             'ReportTitle',
             parent=styles['Title'],
-            fontSize=16,
-            spaceAfter=4,
+            fontSize=15,
+            leading=18,
+            alignment=0,  # Left-aligned next to logo
+            spaceAfter=2,
             textColor=colors.HexColor('#111111'),
         )
         subtitle_style = ParagraphStyle(
             'ReportSubtitle',
             parent=styles['Normal'],
             fontSize=9,
+            leading=12,
             textColor=colors.HexColor('#6B7280'),
-            spaceAfter=16,
+            spaceAfter=0,
         )
 
         generated_at = timezone.now().strftime('%d %B %Y, %H:%M %Z')
-        story = [
-            Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
-            Paragraph(f"Generated: {generated_at}", subtitle_style),
-        ]
+        usable_width = (landscape(A4)[0] if use_landscape else A4[0]) - 3 * cm
+
+        logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
+        story = []
+        if os.path.exists(logo_path):
+            logo_img = RLImage(logo_path, width=1.6 * cm, height=1.6 * cm)
+            header_text = [
+                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"Generated: {generated_at}", subtitle_style),
+            ]
+            header_table = Table(
+                [[logo_img, header_text]],
+                colWidths=[2.0 * cm, usable_width - 2.0 * cm],
+            )
+            header_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LINEBELOW', (0, 0), (-1, 0), 0.75, colors.HexColor('#E5E7EB')),
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 0.4 * cm))
+        else:
+            story.extend([
+                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"Generated: {generated_at}", subtitle_style),
+                Spacer(1, 0.4 * cm),
+            ])
 
         # Calculate column widths evenly across the available page width
-        usable_width = (landscape(A4)[0] if use_landscape else A4[0]) - 3 * cm
         col_count = len(headers)
         col_widths = [usable_width / col_count] * col_count
 

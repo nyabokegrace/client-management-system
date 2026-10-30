@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import {
   BarChart3,
   Download,
@@ -212,14 +213,25 @@ export default function ReportsPage() {
       <div className="px-6 py-6 space-y-6">
         {/* Quick PDF Export & In-Platform Viewer Banner */}
         <div className="bg-[#111111] text-white p-5 rounded flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold tracking-wide flex items-center">
-              <FileText className="w-4 h-4 mr-2" />
-              Verified Database Export Center
-            </h2>
-            <p className="text-xs text-gray-400 mt-1">
-              Preview formatted PDF reports directly in the platform or download them for partner meetings and auditing.
-            </p>
+          <div className="flex items-center space-x-3.5">
+            <div className="w-11 h-11 rounded overflow-hidden bg-[#1a1a1a] border border-[#2e2e2e] flex-shrink-0 p-1">
+              <Image
+                src="/logo.png"
+                alt="Siwolo P.O Law Advocates Logo"
+                width={44}
+                height={44}
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold tracking-wide flex items-center">
+                <FileText className="w-4 h-4 mr-2" />
+                Verified Database Export Center
+              </h2>
+              <p className="text-xs text-gray-400 mt-1">
+                Preview formatted PDF reports directly in the platform or download them for partner meetings and auditing.
+              </p>
+            </div>
           </div>
           <div className="flex items-center space-x-2">
             <button
