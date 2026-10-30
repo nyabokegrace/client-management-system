@@ -30,10 +30,18 @@ class ReportsTests(TestCase):
         self.assertEqual(response.data['kpis']['registered_clients'], 1)
         self.assertEqual(response.data['kpis']['active_matters'], 1)
 
-    def test_csv_export_matters(self):
-        url = reverse('report-export')
-        response = self.client.get(url, {'type': 'matters'})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response['Content-Type'], 'text/csv')
-        self.assertIn('attachment; filename="matters_report.csv"', response['Content-Disposition'])
-        self.assertIn('Matter Reference', response.content.decode('utf-8'))
+    def test_pdf_export_and_inline_view_reports(self):
+        url = reverse('report-export-pdf')
+        for rtype in ['matters', 'clients', 'tasks']:
+            response = self.client.get(url, {'type': rtype})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response['Content-Type'], 'application/pdf')
+            self.assertIn(f'attachment; filename="{rtype}_report.pdf"', response['Content-Disposition'])
+            self.assertTrue(response.content.startswith(b'%PDF-'))
+
+            # Test inline viewing mode
+            view_resp = self.client.get(url, {'type': rtype, 'mode': 'view'})
+            self.assertEqual(view_resp.status_code, status.HTTP_200_OK)
+            self.assertEqual(view_resp['Content-Type'], 'application/pdf')
+            self.assertIn(f'inline; filename="{rtype}_report.pdf"', view_resp['Content-Disposition'])
+            self.assertTrue(view_resp.content.startswith(b'%PDF-'))

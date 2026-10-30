@@ -11,7 +11,7 @@ import {
 } from '../types';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+  process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 class ApiClient {
   private getAuthHeader(): Record<string, string> {

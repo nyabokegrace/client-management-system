@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Scale, Lock, User, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Lock, User, AlertCircle, ArrowRight, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { api } from '../../lib/api';
 
 export default function LoginPage() {
@@ -11,6 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -49,8 +51,15 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-[#F3F4F6] p-4">
       <div className="w-full max-w-md bg-white border border-[#E5E7EB] rounded shadow-sm p-8">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded bg-[#111111] text-white mb-4">
-            <Scale className="w-6 h-6" />
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded overflow-hidden mb-4">
+            <Image
+              src="/logo.png"
+              alt="Siwolo P.O Law Advocates Logo"
+              width={56}
+              height={56}
+              className="w-full h-full object-contain"
+              priority
+            />
           </div>
           <h1 className="text-xl font-bold tracking-tight text-[#111111]">
             Siwolo P.O Law Advocates
@@ -92,13 +101,22 @@ export default function LoginPage() {
             <div className="relative">
               <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                tabIndex={-1}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 

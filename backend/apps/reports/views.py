@@ -1,10 +1,18 @@
-import csv
+import os
+from io import BytesIO
 from django.http import HttpResponse
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.negotiation import BaseContentNegotiation
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 
 from apps.clients.models import Client, ClientStatus, ClientType
 from apps.matters.models import Matter, MatterStatus
@@ -127,50 +135,181 @@ class AnalyticsReportsView(APIView):
         })
 
 
-class ExportReportCSVView(APIView):
+class IgnoreClientContentNegotiation(BaseContentNegotiation):
+    def select_parser(self, request, parsers):
+        return parsers[0] if parsers else None
+
+    def select_renderer(self, request, renderers, format_suffix=None):
+        return (renderers[0], renderers[0].media_type)
+
+
+class ExportReportPDFView(APIView):
     """
-    Export reports (matters, clients, or tasks) as formatted CSV.
+    Export reports (matters, clients, or tasks) as formatted PDF using reportlab.
     """
     permission_classes = [IsAuthenticated, IsInternalStaff]
+    content_negotiation_class = IgnoreClientContentNegotiation
+
+    FIRM_NAME = "Siwolo P.O Law Advocates"
+
+    def _build_pdf(self, title: str, headers: list, rows: list, filename: str, use_landscape: bool = False, inline: bool = False):
+        buffer = BytesIO()
+        pagesize = landscape(A4) if use_landscape else A4
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=pagesize,
+            leftMargin=1.5 * cm,
+            rightMargin=1.5 * cm,
+            topMargin=1.5 * cm,
+            bottomMargin=1.5 * cm,
+        )
+
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'ReportTitle',
+            parent=styles['Title'],
+            fontSize=15,
+            leading=18,
+            alignment=0,  # Left-aligned next to logo
+            spaceAfter=2,
+            textColor=colors.HexColor('#111111'),
+        )
+        subtitle_style = ParagraphStyle(
+            'ReportSubtitle',
+            parent=styles['Normal'],
+            fontSize=9,
+            leading=12,
+            textColor=colors.HexColor('#6B7280'),
+            spaceAfter=0,
+        )
+
+        generated_at = timezone.now().strftime('%d %B %Y, %H:%M %Z')
+        usable_width = (landscape(A4)[0] if use_landscape else A4[0]) - 3 * cm
+
+        logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
+        story = []
+        if os.path.exists(logo_path):
+            logo_img = RLImage(logo_path, width=1.6 * cm, height=1.6 * cm)
+            header_text = [
+                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"Generated: {generated_at}", subtitle_style),
+            ]
+            header_table = Table(
+                [[logo_img, header_text]],
+                colWidths=[2.0 * cm, usable_width - 2.0 * cm],
+            )
+            header_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LINEBELOW', (0, 0), (-1, 0), 0.75, colors.HexColor('#E5E7EB')),
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 0.4 * cm))
+        else:
+            story.extend([
+                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"Generated: {generated_at}", subtitle_style),
+                Spacer(1, 0.4 * cm),
+            ])
+
+        # Calculate column widths evenly across the available page width
+        col_count = len(headers)
+        col_widths = [usable_width / col_count] * col_count
+
+        # Build table data: header row + data rows
+        cell_style = ParagraphStyle(
+            'CellStyle',
+            parent=styles['Normal'],
+            fontSize=7,
+            leading=9,
+            wordWrap='CJK',
+        )
+        header_style = ParagraphStyle(
+            'HeaderStyle',
+            parent=styles['Normal'],
+            fontSize=7.5,
+            leading=10,
+            textColor=colors.white,
+            fontName='Helvetica-Bold',
+        )
+
+        table_data = [[Paragraph(h, header_style) for h in headers]]
+        for row in rows:
+            table_data.append([Paragraph(str(cell) if cell is not None else '', cell_style) for cell in row])
+
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+        # Alternating row shading
+        row_count = len(table_data)
+        style_commands = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#111111')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7.5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9FAFB')]),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#E5E7EB')),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 1), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+        ]
+        table.setStyle(TableStyle(style_commands))
+
+        story.append(table)
+        doc.build(story)
+
+        buffer.seek(0)
+        disposition = 'inline' if inline else 'attachment'
+        response = HttpResponse(buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+        return response
 
     def get(self, request):
         report_type = request.query_params.get('type', 'matters')
-        response = HttpResponse(content_type='text/csv')
-        
+        inline = request.query_params.get('mode') == 'view'
+
         if report_type == 'clients':
-            response['Content-Disposition'] = 'attachment; filename="clients_report.csv"'
-            writer = csv.writer(response)
-            writer.writerow(['Client Reference', 'Name / Organization', 'Type', 'Phone', 'Email', 'Status', 'Registered Date'])
-            for client in Client.objects.all().order_by('-created_at'):
-                writer.writerow([
-                    client.client_reference,
-                    client.display_name,
-                    client.get_client_type_display(),
-                    client.phone_number,
-                    client.email,
-                    client.get_status_display(),
-                    client.created_at.strftime('%Y-%m-%d')
-                ])
+            headers = ['Client Reference', 'Name / Organization', 'Type', 'Phone', 'Email', 'Status', 'Registered Date']
+            rows = [
+                [
+                    c.client_reference,
+                    c.display_name,
+                    c.get_client_type_display(),
+                    c.phone_number,
+                    c.email,
+                    c.get_status_display(),
+                    c.created_at.strftime('%Y-%m-%d'),
+                ]
+                for c in Client.objects.all().order_by('-created_at')
+            ]
+            return self._build_pdf('Clients Report', headers, rows, 'clients_report.pdf', use_landscape=False, inline=inline)
+
         elif report_type == 'tasks':
-            response['Content-Disposition'] = 'attachment; filename="tasks_report.csv"'
-            writer = csv.writer(response)
-            writer.writerow(['Title', 'Matter Reference', 'Assigned To', 'Priority', 'Status', 'Due Date', 'Created Date'])
-            for task in Task.objects.select_related('matter', 'assigned_to').all().order_by('due_date'):
-                writer.writerow([
-                    task.title,
-                    task.matter.matter_reference if task.matter else 'N/A',
-                    task.assigned_to.full_name if task.assigned_to else 'Unassigned',
-                    task.get_priority_display(),
-                    task.get_status_display(),
-                    task.due_date.strftime('%Y-%m-%d %H:%M') if task.due_date else 'N/A',
-                    task.created_at.strftime('%Y-%m-%d')
-                ])
-        else: # default matters
-            response['Content-Disposition'] = 'attachment; filename="matters_report.csv"'
-            writer = csv.writer(response)
-            writer.writerow(['Matter Reference', 'Title', 'Client', 'Type', 'Status', 'Priority', 'Assigned Advocate', 'Court', 'Case Number', 'Date Opened'])
-            for m in Matter.objects.select_related('client', 'assigned_advocate').all().order_by('-created_at'):
-                writer.writerow([
+            headers = ['Title', 'Matter Reference', 'Assigned To', 'Priority', 'Status', 'Due Date', 'Created Date']
+            rows = [
+                [
+                    t.title,
+                    t.matter.matter_reference if t.matter else 'N/A',
+                    t.assigned_to.full_name if t.assigned_to else 'Unassigned',
+                    t.get_priority_display(),
+                    t.get_status_display(),
+                    t.due_date.strftime('%Y-%m-%d %H:%M') if t.due_date else 'N/A',
+                    t.created_at.strftime('%Y-%m-%d'),
+                ]
+                for t in Task.objects.select_related('matter', 'assigned_to').all().order_by('due_date')
+            ]
+            return self._build_pdf('Tasks Report', headers, rows, 'tasks_report.pdf', use_landscape=False, inline=inline)
+
+        else:  # default: matters
+            headers = ['Matter Reference', 'Title', 'Client', 'Type', 'Status', 'Priority', 'Advocate', 'Court', 'Case Number', 'Date Opened']
+            rows = [
+                [
                     m.matter_reference,
                     m.title,
                     m.client.display_name if m.client else 'N/A',
@@ -180,7 +319,8 @@ class ExportReportCSVView(APIView):
                     m.assigned_advocate.full_name if m.assigned_advocate else 'Unassigned',
                     m.court,
                     m.case_number,
-                    m.date_opened.strftime('%Y-%m-%d') if m.date_opened else 'N/A'
-                ])
-
-        return response
+                    m.date_opened.strftime('%Y-%m-%d') if m.date_opened else 'N/A',
+                ]
+                for m in Matter.objects.select_related('client', 'assigned_advocate').all().order_by('-created_at')
+            ]
+            return self._build_pdf('Matters Report', headers, rows, 'matters_report.pdf', use_landscape=True, inline=inline)

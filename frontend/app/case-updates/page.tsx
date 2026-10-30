@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Clock,
   Plus,
@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Calendar,
   User as UserIcon,
+  X,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
@@ -25,6 +26,9 @@ export default function CaseUpdatesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+  const [matterSearch, setMatterSearch] = useState('');
+  const [matterDropdownOpen, setMatterDropdownOpen] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -58,8 +62,19 @@ export default function CaseUpdatesPage() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, [categoryFilter, matterFilter]);
+    const timer = setTimeout(() => {
+      fetchData();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [categoryFilter, matterFilter, searchTerm]);
+
+  // Auto-dismiss success banner after 4 seconds
+  useEffect(() => {
+    if (successMsg) {
+      const t = setTimeout(() => setSuccessMsg(''), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [successMsg]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +95,8 @@ export default function CaseUpdatesPage() {
         event_datetime: new Date(formData.event_datetime).toISOString(),
       });
       setIsModalOpen(false);
+      setMatterSearch('');
+      setMatterDropdownOpen(false);
       setFormData({
         matter: 0,
         title: '',
@@ -87,6 +104,7 @@ export default function CaseUpdatesPage() {
         description: '',
         event_datetime: new Date().toISOString().slice(0, 16),
       });
+      setSuccessMsg('Case update recorded successfully.');
       fetchData();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Error recording case update');
@@ -112,18 +130,35 @@ export default function CaseUpdatesPage() {
         }
       />
 
+      {/* Success Banner */}
+      {successMsg && (
+        <div className="mx-6 mt-4 flex items-center gap-2 bg-green-50 border border-green-200 text-green-800 text-xs font-medium px-4 py-3 rounded">
+          <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+          {successMsg}
+        </div>
+      )}
+
       <div className="px-6 py-6 space-y-4">
         {/* Filters */}
         <div className="bg-white border border-[#E5E7EB] p-4 rounded flex flex-col md:flex-row items-center justify-between gap-3">
-          <form onSubmit={handleSearch} className="relative flex-1 w-full">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="Search updates by keyword, reference, title or notes..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-            />
+          <form onSubmit={handleSearch} className="relative flex-1 w-full flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search updates by keyword, reference, title or notes..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+            <button
+              type="submit"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors shrink-0"
+            >
+              <Search className="w-3.5 h-3.5 mr-1.5" />
+              Search
+            </button>
           </form>
 
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
@@ -224,29 +259,104 @@ export default function CaseUpdatesPage() {
       {/* Record Update Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => { setIsModalOpen(false); setMatterSearch(''); setMatterDropdownOpen(false); }}
         title="Record Case Progress Update"
         description="Add an immutable progress update to a matter's chronological record."
         maxWidth="lg"
       >
         <form onSubmit={handleRecordUpdate} className="space-y-4 text-xs">
-          <div>
+          <div className="relative">
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Select Legal Matter *
             </label>
-            <select
-              required
-              value={formData.matter}
-              onChange={(e) => setFormData({ ...formData, matter: Number(e.target.value) })}
-              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-            >
-              <option value={0}>— Select Matter —</option>
-              {matters.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.matter_reference} - {m.title}
-                </option>
-              ))}
-            </select>
+            {/* Searchable matter picker */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5 z-10" />
+              <input
+                type="text"
+                placeholder={
+                  formData.matter
+                    ? matters.find((m) => m.id === formData.matter)
+                        ? `${matters.find((m) => m.id === formData.matter)!.matter_reference} - ${matters.find((m) => m.id === formData.matter)!.title}`
+                        : 'Search matters...'
+                    : 'Search by reference or title...'
+                }
+                value={matterSearch}
+                onChange={(e) => {
+                  setMatterSearch(e.target.value);
+                  setMatterDropdownOpen(true);
+                  if (e.target.value === '') setFormData({ ...formData, matter: 0 });
+                }}
+                onFocus={() => setMatterDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMatterDropdownOpen(false), 150)}
+                className="w-full pl-9 pr-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black text-xs"
+              />
+              {/* Hidden native input for required validation */}
+              <input
+                type="number"
+                required
+                value={formData.matter || ''}
+                onChange={() => {}}
+                className="sr-only"
+                tabIndex={-1}
+              />
+            </div>
+
+            {/* Dropdown results */}
+            {matterDropdownOpen && (
+              <div className="absolute z-50 w-full mt-1 bg-white border border-[#E5E7EB] rounded shadow-lg max-h-48 overflow-y-auto">
+                {matters
+                  .filter((m) => {
+                    const q = matterSearch.toLowerCase();
+                    return (
+                      !q ||
+                      m.matter_reference.toLowerCase().includes(q) ||
+                      m.title.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onMouseDown={() => {
+                        setFormData({ ...formData, matter: m.id });
+                        setMatterSearch('');
+                        setMatterDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F9FAFB] transition-colors border-b border-gray-50 last:border-0 ${
+                        formData.matter === m.id ? 'bg-[#F9FAFB] font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-semibold text-[#111111]">{m.matter_reference}</span>
+                      <span className="text-gray-500 ml-2">— {m.title}</span>
+                    </button>
+                  ))}
+                {matters.filter((m) => {
+                  const q = matterSearch.toLowerCase();
+                  return !q || m.matter_reference.toLowerCase().includes(q) || m.title.toLowerCase().includes(q);
+                }).length === 0 && (
+                  <p className="px-3 py-3 text-xs text-gray-400 text-center">No matters found.</p>
+                )}
+              </div>
+            )}
+
+            {/* Show selected matter chip */}
+            {formData.matter > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="text-[11px] text-gray-500">Selected:</span>
+                <span className="text-[11px] font-semibold text-[#111111] bg-gray-100 px-2 py-0.5 rounded">
+                  {matters.find((m) => m.id === formData.matter)?.matter_reference} —{' '}
+                  {matters.find((m) => m.id === formData.matter)?.title}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setFormData({ ...formData, matter: 0 }); setMatterSearch(''); }}
+                  className="text-[11px] text-gray-400 hover:text-red-500 transition-colors ml-1"
+                >
+                  ✕ clear
+                </button>
+              </div>
+            )}
           </div>
 
           <div>
