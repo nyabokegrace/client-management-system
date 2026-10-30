@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Scale, Lock, User, AlertCircle, ArrowRight, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { Lock, User, AlertCircle, ArrowRight, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { api } from '../../lib/api';
 
 export default function LoginPage() {
@@ -50,8 +51,15 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-[#F3F4F6] p-4">
       <div className="w-full max-w-md bg-white border border-[#E5E7EB] rounded shadow-sm p-8">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded bg-[#111111] text-white mb-4">
-            <Scale className="w-6 h-6" />
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded overflow-hidden mb-4">
+            <Image
+              src="/logo.png"
+              alt="Siwolo P.O Law Advocates Logo"
+              width={56}
+              height={56}
+              className="w-full h-full object-contain"
+              priority
+            />
           </div>
           <h1 className="text-xl font-bold tracking-tight text-[#111111]">
             Siwolo P.O Law Advocates

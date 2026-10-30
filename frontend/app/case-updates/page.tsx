@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Clock,
   Plus,
@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Calendar,
   User as UserIcon,
+  X,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
@@ -25,6 +26,7 @@ export default function CaseUpdatesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
   const [matterSearch, setMatterSearch] = useState('');
   const [matterDropdownOpen, setMatterDropdownOpen] = useState(false);
 
@@ -66,6 +68,14 @@ export default function CaseUpdatesPage() {
     return () => clearTimeout(timer);
   }, [categoryFilter, matterFilter, searchTerm]);
 
+  // Auto-dismiss success banner after 4 seconds
+  useEffect(() => {
+    if (successMsg) {
+      const t = setTimeout(() => setSuccessMsg(''), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [successMsg]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     fetchData();
@@ -94,6 +104,7 @@ export default function CaseUpdatesPage() {
         description: '',
         event_datetime: new Date().toISOString().slice(0, 16),
       });
+      setSuccessMsg('Case update recorded successfully.');
       fetchData();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Error recording case update');
@@ -118,6 +129,14 @@ export default function CaseUpdatesPage() {
           </button>
         }
       />
+
+      {/* Success Banner */}
+      {successMsg && (
+        <div className="mx-6 mt-4 flex items-center gap-2 bg-green-50 border border-green-200 text-green-800 text-xs font-medium px-4 py-3 rounded">
+          <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+          {successMsg}
+        </div>
+      )}
 
       <div className="px-6 py-6 space-y-4">
         {/* Filters */}

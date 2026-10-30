@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
@@ -16,7 +17,6 @@ import {
   LogOut,
   Menu,
   X,
-  Scale,
   ShieldCheck,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -71,8 +71,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentUser: initialUser }) =>
       {/* Brand Header */}
       <div className="p-6 border-b border-[#262626] flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded bg-[#222222] border border-[#333333] flex items-center justify-center text-white">
-            <Scale className="w-5 h-5 text-gray-200" />
+          <div className="w-10 h-10 rounded overflow-hidden flex-shrink-0">
+            <Image
+              src="/logo.png"
+              alt="Siwolo P.O Law Advocates Logo"
+              width={40}
+              height={40}
+              className="w-full h-full object-contain"
+              priority
+            />
           </div>
           <div>
             <h1 className="text-sm font-semibold tracking-wider uppercase text-gray-100">
@@ -156,7 +163,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentUser: initialUser }) =>
       {/* Mobile Menu Button */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-[#111111] text-white px-4 py-3 flex items-center justify-between border-b border-[#262626]">
         <div className="flex items-center space-x-2">
-          <Scale className="w-5 h-5 text-gray-300" />
+          <div className="w-7 h-7 rounded overflow-hidden flex-shrink-0">
+            <Image
+              src="/logo.png"
+              alt="Siwolo P.O Law Advocates Logo"
+              width={28}
+              height={28}
+              className="w-full h-full object-contain"
+              priority
+            />
+          </div>
           <span className="text-xs font-semibold uppercase tracking-wider">
             Siwolo P.O Law Advocates
           </span>

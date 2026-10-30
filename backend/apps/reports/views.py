@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.negotiation import BaseContentNegotiation
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -133,15 +134,24 @@ class AnalyticsReportsView(APIView):
         })
 
 
+class IgnoreClientContentNegotiation(BaseContentNegotiation):
+    def select_parser(self, request, parsers):
+        return parsers[0] if parsers else None
+
+    def select_renderer(self, request, renderers, format_suffix=None):
+        return (renderers[0], renderers[0].media_type)
+
+
 class ExportReportPDFView(APIView):
     """
     Export reports (matters, clients, or tasks) as formatted PDF using reportlab.
     """
     permission_classes = [IsAuthenticated, IsInternalStaff]
+    content_negotiation_class = IgnoreClientContentNegotiation
 
     FIRM_NAME = "Siwolo P.O Law Advocates"
 
-    def _build_pdf(self, title: str, headers: list, rows: list, filename: str, use_landscape: bool = False):
+    def _build_pdf(self, title: str, headers: list, rows: list, filename: str, use_landscape: bool = False, inline: bool = False):
         buffer = BytesIO()
         pagesize = landscape(A4) if use_landscape else A4
         doc = SimpleDocTemplate(
@@ -226,12 +236,14 @@ class ExportReportPDFView(APIView):
         doc.build(story)
 
         buffer.seek(0)
+        disposition = 'inline' if inline else 'attachment'
         response = HttpResponse(buffer.read(), content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
         return response
 
     def get(self, request):
         report_type = request.query_params.get('type', 'matters')
+        inline = request.query_params.get('mode') == 'view'
 
         if report_type == 'clients':
             headers = ['Client Reference', 'Name / Organization', 'Type', 'Phone', 'Email', 'Status', 'Registered Date']
@@ -247,7 +259,7 @@ class ExportReportPDFView(APIView):
                 ]
                 for c in Client.objects.all().order_by('-created_at')
             ]
-            return self._build_pdf('Clients Report', headers, rows, 'clients_report.pdf', use_landscape=False)
+            return self._build_pdf('Clients Report', headers, rows, 'clients_report.pdf', use_landscape=False, inline=inline)
 
         elif report_type == 'tasks':
             headers = ['Title', 'Matter Reference', 'Assigned To', 'Priority', 'Status', 'Due Date', 'Created Date']
@@ -263,7 +275,7 @@ class ExportReportPDFView(APIView):
                 ]
                 for t in Task.objects.select_related('matter', 'assigned_to').all().order_by('due_date')
             ]
-            return self._build_pdf('Tasks Report', headers, rows, 'tasks_report.pdf', use_landscape=False)
+            return self._build_pdf('Tasks Report', headers, rows, 'tasks_report.pdf', use_landscape=False, inline=inline)
 
         else:  # default: matters
             headers = ['Matter Reference', 'Title', 'Client', 'Type', 'Status', 'Priority', 'Advocate', 'Court', 'Case Number', 'Date Opened']
@@ -282,4 +294,4 @@ class ExportReportPDFView(APIView):
                 ]
                 for m in Matter.objects.select_related('client', 'assigned_advocate').all().order_by('-created_at')
             ]
-            return self._build_pdf('Matters Report', headers, rows, 'matters_report.pdf', use_landscape=True)
+            return self._build_pdf('Matters Report', headers, rows, 'matters_report.pdf', use_landscape=True, inline=inline)

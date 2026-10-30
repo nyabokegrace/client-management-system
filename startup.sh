@@ -16,11 +16,15 @@ cd /app/backend
 echo "[startup] Running database migrations..."
 python manage.py migrate --noinput
 
-# ── 2. Collect static files ───────────────────────────────────────────────────
+# ── 2. Seed initial firm data (accounts, sample clients & matters) ────────────
+echo "[startup] Seeding initial firm data..."
+python manage.py seed_cms
+
+# ── 3. Collect static files ───────────────────────────────────────────────────
 echo "[startup] Collecting static files..."
 python manage.py collectstatic --noinput --clear
 
 echo "[startup] Startup tasks complete. Launching supervisord..."
 
-# ── 3. Hand off to supervisord (replaces this shell as PID 1) ─────────────────
+# ── 4. Hand off to supervisord (replaces this shell as PID 1) ─────────────────
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
