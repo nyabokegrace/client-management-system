@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Lock, User, AlertCircle, ArrowRight, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { Lock, User, AlertCircle, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { api } from '../../lib/api';
 
 export default function LoginPage() {
@@ -40,11 +40,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = (userVal: string) => {
-    setUsername(userVal);
-    setPassword('Advocate@2026!');
   };
 
   return (
@@ -135,51 +130,6 @@ export default function LoginPage() {
             )}
           </button>
         </form>
-
-        {/* Quick Demo Credentials */}
-        <div className="mt-6 pt-5 border-t border-[#E5E7EB]">
-          <div className="flex items-center space-x-1.5 text-xs font-medium text-gray-600 mb-2.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-gray-500" />
-            <span>Quick Fill Demonstration Credentials:</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('admin')}
-              className="p-2 border border-gray-200 rounded hover:bg-gray-50 text-left transition-colors"
-            >
-              <div className="font-semibold text-gray-900">Administrator</div>
-              <div className="text-[11px] text-gray-500 font-mono">admin</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('siwolo')}
-              className="p-2 border border-gray-200 rounded hover:bg-gray-50 text-left transition-colors"
-            >
-              <div className="font-semibold text-gray-900">Senior Counsel</div>
-              <div className="text-[11px] text-gray-500 font-mono">siwolo</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('jane.wanjiru')}
-              className="p-2 border border-gray-200 rounded hover:bg-gray-50 text-left transition-colors"
-            >
-              <div className="font-semibold text-gray-900">Associate Advocate</div>
-              <div className="text-[11px] text-gray-500 font-mono">jane.wanjiru</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('clerk.omondi')}
-              className="p-2 border border-gray-200 rounded hover:bg-gray-50 text-left transition-colors"
-            >
-              <div className="font-semibold text-gray-900">Legal Assistant</div>
-              <div className="text-[11px] text-gray-500 font-mono">clerk.omondi</div>
-            </button>
-          </div>
-          <p className="text-[10px] text-gray-400 mt-2 text-center">
-            Default Password: <code className="font-mono text-gray-600">Advocate@2026!</code>
-          </p>
-        </div>
 
         <div className="mt-6 pt-4 border-t border-[#E5E7EB] text-center text-[11px] text-[#6B7280]">
           Strictly for authorized internal legal counsel and staff.
