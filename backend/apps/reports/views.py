@@ -1,5 +1,6 @@
 import os
 from io import BytesIO
+from django.conf import settings
 from django.http import HttpResponse
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -150,7 +151,9 @@ class ExportReportPDFView(APIView):
     permission_classes = [IsAuthenticated, IsInternalStaff]
     content_negotiation_class = IgnoreClientContentNegotiation
 
-    FIRM_NAME = "Siwolo P.O Law Advocates"
+    @property
+    def firm_name(self):
+        return getattr(settings, 'FIRM_NAME', "Siwolo P.O Law Advocates")
 
     def _build_pdf(self, title: str, headers: list, rows: list, filename: str, use_landscape: bool = False, inline: bool = False):
         buffer = BytesIO()
@@ -191,7 +194,7 @@ class ExportReportPDFView(APIView):
         if os.path.exists(logo_path):
             logo_img = RLImage(logo_path, width=1.6 * cm, height=1.6 * cm)
             header_text = [
-                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"{title} — {self.firm_name}", title_style),
                 Paragraph(f"Generated: {generated_at}", subtitle_style),
             ]
             header_table = Table(
@@ -210,7 +213,7 @@ class ExportReportPDFView(APIView):
             story.append(Spacer(1, 0.4 * cm))
         else:
             story.extend([
-                Paragraph(f"{title} — {self.FIRM_NAME}", title_style),
+                Paragraph(f"{title} — {self.firm_name}", title_style),
                 Paragraph(f"Generated: {generated_at}", subtitle_style),
                 Spacer(1, 0.4 * cm),
             ])

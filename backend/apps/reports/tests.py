@@ -12,7 +12,7 @@ class ReportsTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_reports',
-            email='reports@siwololaw.co.ke',
+            email='reports@siwoloadvocates.com',
             password='Password123!',
             first_name='Analyst',
             last_name='Advocate',

@@ -1,5 +1,7 @@
-from django.core.management.base import BaseCommand
+import os
+from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
+from django.conf import settings
 from apps.accounts.models import User, UserRole
 from apps.clients.models import Client
 from apps.matters.models import Matter
@@ -10,42 +12,50 @@ from apps.audit.models import AuditLog
 
 
 class Command(BaseCommand):
-    help = 'Ensures core administrator/counsel accounts exist and removes hardcoded demo seed data'
+    help = 'Ensures single administrator account for Siwolo P.O Law Advocates exists and removes demo seed data'
 
     def handle(self, *args, **options):
-        self.stdout.write('Ensuring core accounts for Siwolo P.O Law Advocates...')
+        self.stdout.write('Ensuring core administrator account for Siwolo P.O Law Advocates...')
 
-        # 1. Core accounts (only set initial password when newly created)
-        admin_user, created = User.objects.get_or_create(
-            username='admin',
-            defaults={
-                'email': 'admin@siwololaw.co.ke',
-                'first_name': 'Managing',
-                'last_name': 'Partner',
-                'role': UserRole.ADMIN,
-                'is_staff': True,
-                'is_superuser': True,
-            }
-        )
-        if created:
-            admin_user.set_password('Advocate@2026!')
+        # Split ADVOCATE_NAME into first and last name
+        name_parts = settings.ADVOCATE_NAME.split()
+        first_name = " ".join(name_parts[:-1]) if len(name_parts) > 1 else name_parts[0]
+        last_name = name_parts[-1] if len(name_parts) > 1 else ''
+
+        admin_password = os.getenv('INITIAL_ADMIN_PASSWORD') or os.getenv('INITIAL_ADVOCATE_PASSWORD')
+
+        admin_user = User.objects.filter(username='admin').first()
+        if not admin_user:
+            if not admin_password:
+                raise CommandError(
+                    'INITIAL_ADMIN_PASSWORD (or INITIAL_ADVOCATE_PASSWORD) environment variable is required to seed the administrator account.'
+                )
+            admin_user = User.objects.create(
+                username='admin',
+                email=settings.FIRM_EMAIL,
+                first_name=first_name,
+                last_name=last_name,
+                role=UserRole.ADMIN,
+                phone_number=settings.FIRM_PHONE,
+                is_staff=True,
+                is_superuser=True,
+            )
+            admin_user.set_password(admin_password)
             admin_user.save()
+            self.stdout.write(self.style.SUCCESS(f'Created single administrator account: admin ({settings.FIRM_EMAIL})'))
+        else:
+            self.stdout.write('Administrator account already exists. Existing credentials preserved.')
 
-        senior_advocate, created = User.objects.get_or_create(
-            username='siwolo',
-            defaults={
-                'email': 'p.siwolo@siwololaw.co.ke',
-                'first_name': 'Peter O.',
-                'last_name': 'Siwolo',
-                'role': UserRole.ADVOCATE,
-                'phone_number': '+254 722 000111',
-            }
-        )
-        if created:
-            senior_advocate.set_password('Advocate@2026!')
-            senior_advocate.save()
+        # 2. Reassign any records belonging to other users before removing them
+        other_users = User.objects.exclude(id=admin_user.id)
+        if other_users.exists():
+            Matter.objects.filter(assigned_advocate__in=other_users).update(assigned_advocate=admin_user)
+            Hearing.objects.filter(assigned_advocate__in=other_users).update(assigned_advocate=admin_user)
+            Task.objects.filter(assigned_to__in=other_users).update(assigned_to=admin_user)
+            # Remove second 'siwolo' account and any legacy demo users
+            other_users.delete()
 
-        # 2. Remove hardcoded demo records if present
+        # 3. Remove hardcoded demo records if present
         demo_clients = Client.objects.filter(
             Q(national_id='23456789', first_name='Ezekiel', last_name='Kiptoo')
             | Q(organization_name='Apex Logistics Kenya Ltd')
@@ -72,7 +82,6 @@ class Command(BaseCommand):
         ).delete()
 
         demo_clients.delete()
-        User.objects.filter(username__in=['jane.wanjiru', 'clerk.omondi']).delete()
         AuditLog.objects.filter(target_repr='Administrator initial system seed').delete()
 
-        self.stdout.write(self.style.SUCCESS('Core accounts verified and demo seed data cleaned up!'))
+        self.stdout.write(self.style.SUCCESS('Single user verified and demo seed data cleaned up!'))

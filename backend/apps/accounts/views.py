@@ -1,3 +1,5 @@
+from django.conf import settings
+from config.firm_settings import get_firm_details
 from rest_framework import generics, status, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -7,11 +9,19 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from .models import User, UserRole
 from .serializers import (
     UserSerializer,
+    UserProfileUpdateSerializer,
     UserCreateUpdateSerializer,
     LoginSerializer,
     ChangePasswordSerializer,
 )
 from .permissions import IsAdministrator, IsInternalStaff
+
+
+class FirmSettingsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(get_firm_details())
 
 
 class LoginView(APIView):
@@ -23,9 +33,12 @@ class LoginView(APIView):
         user = serializer.validated_data['user']
         token, _ = Token.objects.get_or_create(user=user)
 
+        user_data = UserSerializer(user).data
+        user_data['firm'] = get_firm_details()
+
         return Response({
             'token': token.key,
-            'user': UserSerializer(user).data,
+            'user': user_data,
             'message': 'Authentication successful.'
         }, status=status.HTTP_200_OK)
 
@@ -43,7 +56,20 @@ class CurrentUserView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
+        data = UserSerializer(request.user).data
+        data['firm'] = get_firm_details()
+        return Response(data)
+
+    def patch(self, request):
+        serializer = UserProfileUpdateSerializer(request.user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        data = UserSerializer(request.user).data
+        data['firm'] = get_firm_details()
+        return Response(data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        return self.patch(request)
 
 
 class ChangePasswordView(APIView):

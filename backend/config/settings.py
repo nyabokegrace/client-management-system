@@ -2,6 +2,16 @@ import os
 from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
+from config.firm_settings import (
+    DEFAULT_ADVOCATE_NAME,
+    FIRM_NAME,
+    ADVOCATE_NAME,
+    ADVOCATE_TITLE,
+    FIRM_PHONE,
+    FIRM_EMAIL,
+    FIRM_ADDRESS,
+    get_firm_details,
+)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

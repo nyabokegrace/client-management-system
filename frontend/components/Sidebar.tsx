@@ -138,11 +138,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentUser: initialUser }) =>
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-gray-200 truncate">
-                {user?.full_name || user?.username || 'Staff Member'}
+                {user?.full_name || 'Peter O. Siwolo'}
               </p>
-              <div className="flex items-center text-[10px] text-gray-400 capitalize">
+              <div className="flex items-center text-[10px] text-gray-400">
                 <ShieldCheck className="w-3 h-3 mr-1 text-gray-400" />
-                {user?.role || 'Staff'}
+                Principal Advocate and Founder
               </div>
             </div>
           </div>

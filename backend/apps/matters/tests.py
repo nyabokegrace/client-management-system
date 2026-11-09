@@ -12,7 +12,7 @@ class MatterManagementTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_peter',
-            email='peter@siwololaw.co.ke',
+            email='peter@siwoloadvocates.com',
             password='Password123!',
             first_name='Peter',
             last_name='Siwolo',

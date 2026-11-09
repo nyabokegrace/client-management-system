@@ -15,7 +15,7 @@ class HearingTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_hearings',
-            email='hearings@siwololaw.co.ke',
+            email='hearings@siwoloadvocates.com',
             password='Password123!',
             first_name='Court',
             last_name='Counsel',

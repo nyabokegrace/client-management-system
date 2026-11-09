@@ -21,7 +21,6 @@ import { Matter, Client, User, MatterStatus, MatterPriority } from '../../types'
 export default function MattersPage() {
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [advocates, setAdvocates] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -35,7 +34,6 @@ export default function MattersPage() {
     matter_type: 'litigation',
     priority: 'normal' as MatterPriority,
     status: 'new' as MatterStatus,
-    assigned_advocate: null as number | null,
     court: '',
     case_number: '',
     opposing_party: '',
@@ -51,15 +49,13 @@ export default function MattersPage() {
       if (searchTerm) params.search = searchTerm;
       if (statusFilter !== 'all') params.status = statusFilter;
 
-      const [mattersRes, clientsRes, usersRes] = await Promise.all([
+      const [mattersRes, clientsRes] = await Promise.all([
         api.matters.list(params),
         api.clients.list({ status: 'active' }),
-        api.users.list({ role: 'advocate' }),
       ]);
 
       setMatters(Array.isArray(mattersRes) ? mattersRes : mattersRes.results || []);
       setClients(Array.isArray(clientsRes) ? clientsRes : clientsRes.results || []);
-      setAdvocates(Array.isArray(usersRes) ? usersRes : usersRes.results || []);
     } catch {
       // ignore
     } finally {
@@ -85,10 +81,7 @@ export default function MattersPage() {
 
     try {
       setSubmitting(true);
-      await api.matters.create({
-        ...formData,
-        assigned_advocate: formData.assigned_advocate || undefined,
-      });
+      await api.matters.create(formData);
       setIsModalOpen(false);
       setFormData({
         title: '',
@@ -96,7 +89,6 @@ export default function MattersPage() {
         matter_type: 'litigation',
         priority: 'normal',
         status: 'new',
-        assigned_advocate: null,
         court: '',
         case_number: '',
         opposing_party: '',
@@ -183,20 +175,19 @@ export default function MattersPage() {
                   <th className="px-5 py-3">Client</th>
                   <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Priority</th>
-                  <th className="px-5 py-3">Assigned Advocate</th>
                   <th className="px-5 py-3">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E5E7EB]">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-gray-500">
+                    <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
                       Loading legal matters...
                     </td>
                   </tr>
                 ) : matters.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-gray-500">
+                    <td colSpan={6} className="px-5 py-12 text-center text-gray-500">
                       <Briefcase className="w-8 h-8 mx-auto text-gray-300 mb-2" />
                       <p className="font-medium text-gray-700">No legal matter files found.</p>
                       <p className="text-[11px] text-gray-400 mt-1">Open a new matter file for an existing client.</p>
@@ -233,9 +224,6 @@ export default function MattersPage() {
                         >
                           {matter.priority_display || matter.priority}
                         </Badge>
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-700">
-                        {matter.assigned_advocate_name || 'Unassigned'}
                       </td>
                       <td className="px-5 py-3.5">
                         <select
@@ -374,6 +362,7 @@ export default function MattersPage() {
               </label>
               <input
                 type="text"
+                placeholder="e.g. ABC Company Ltd"
                 value={formData.opposing_party}
                 onChange={(e) => setFormData({ ...formData, opposing_party: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
@@ -381,20 +370,15 @@ export default function MattersPage() {
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Assigned Advocate
+                Opposing Advocate / Law Firm
               </label>
-              <select
-                value={formData.assigned_advocate || ''}
-                onChange={(e) => setFormData({ ...formData, assigned_advocate: e.target.value ? Number(e.target.value) : null })}
+              <input
+                type="text"
+                placeholder="e.g. Bowmans Kenya"
+                value={formData.opposing_advocate}
+                onChange={(e) => setFormData({ ...formData, opposing_advocate: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              >
-                <option value="">— Select Lead Advocate —</option>
-                {advocates.map((adv) => (
-                  <option key={adv.id} value={adv.id}>
-                    {adv.full_name} ({adv.username})
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 

@@ -10,8 +10,7 @@ import {
   DashboardSummary,
 } from '../types';
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+const API_BASE_URL = '/api/v1';
 
 class ApiClient {
   private getAuthHeader(): Record<string, string> {
@@ -97,6 +96,35 @@ class ApiClient {
     },
     me: async () => {
       return this.request<User>('/auth/me/');
+    },
+    updateProfile: async (data: Partial<User>) => {
+      const updated = await this.request<User>('/auth/me/', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('siwolo_user', JSON.stringify(updated));
+      }
+      return updated;
+    },
+    changePassword: async (data: { old_password: string; new_password: string }) => {
+      return this.request<{ message: string }>('/auth/change-password/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+  };
+
+  firmSettings = {
+    get: async () => {
+      return this.request<{
+        firm_name: string;
+        advocate_name: string;
+        advocate_title: string;
+        firm_phone: string;
+        firm_email: string;
+        firm_address?: string;
+      }>('/firm-settings/');
     },
   };
 

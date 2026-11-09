@@ -15,10 +15,6 @@ RUN npm ci --prefer-offline
 # Copy source and build
 COPY frontend/ ./
 
-# NEXT_PUBLIC_* vars are baked in at build time; pass them via --build-arg if needed
-ARG NEXT_PUBLIC_API_URL=""
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-
 RUN npm run build
 
 # ─── Stage 2: Final image ─────────────────────────────────────────────────────

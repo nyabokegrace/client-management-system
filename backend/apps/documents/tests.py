@@ -18,7 +18,7 @@ class DocumentManagementTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_main',
-            email='adv@siwololaw.co.ke',
+            email='adv@siwoloadvocates.com',
             password='Password123!',
             first_name='Lead',
             last_name='Advocate',
@@ -26,7 +26,7 @@ class DocumentManagementTests(TestCase):
         )
         self.staff_user = User.objects.create_user(
             username='staff_test',
-            email='staff@siwololaw.co.ke',
+            email='staff@siwoloadvocates.com',
             password='Password123!',
             first_name='Clerk',
             last_name='User',

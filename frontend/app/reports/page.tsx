@@ -261,62 +261,6 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* Advocate Caseload Table */}
-        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#E5E7EB] bg-[#F9FAFB]">
-            <h3 className="text-xs font-bold text-[#111111] uppercase tracking-wider">
-              Advocate Workload Distribution
-            </h3>
-            <p className="text-[11px] text-[#6B7280] mt-0.5">
-              Live matter counts, pending tasks and upcoming court appearances by assigned counsel.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
-                <tr>
-                  <th className="px-5 py-3">Advocate Name</th>
-                  <th className="px-5 py-3">Active Matters</th>
-                  <th className="px-5 py-3">Pending Tasks</th>
-                  <th className="px-5 py-3">Upcoming Hearings</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#E5E7EB]">
-                {loading ? (
-                  <tr>
-                    <td colSpan={4} className="px-5 py-8 text-center text-gray-500">
-                      Loading workload metrics...
-                    </td>
-                  </tr>
-                ) : !data?.advocate_workload || data.advocate_workload.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-5 py-8 text-center text-gray-500">
-                      No advocate assignments found.
-                    </td>
-                  </tr>
-                ) : (
-                  data.advocate_workload.map((adv) => (
-                    <tr key={adv.advocate_id} className="hover:bg-gray-50">
-                      <td className="px-5 py-3.5 font-semibold text-gray-900">
-                        {adv.advocate_name}
-                      </td>
-                      <td className="px-5 py-3.5 font-medium text-gray-800">
-                        {adv.active_matters}
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-700">
-                        {adv.pending_tasks}
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-700">
-                        {adv.upcoming_hearings}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         {/* 2 Grids: Matters by Status & Matters by Type */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white border border-[#E5E7EB] rounded p-5">

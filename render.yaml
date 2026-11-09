@@ -32,7 +32,7 @@ services:
       - key: ALLOWED_HOSTS
         # Comma-separated list. Render provides *.onrender.com by default;
         # add your custom domain here too.
-        value: "your-service-name.onrender.com,your-custom-domain.com"
+        value: "your-service-name.onrender.com,cms.siwoloadvocates.com"
 
       # ── Database ─────────────────────────────────────────────────────────────
       - key: DATABASE_URL
@@ -44,11 +44,8 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         # Comma-separated list of allowed origins for the Django CORS headers.
         # In production this should match your frontend domain.
-        value: "https://your-service-name.onrender.com,https://your-custom-domain.com"
+        value: "https://your-service-name.onrender.com,https://cms.siwoloadvocates.com"
 
-      # ── Next.js public ───────────────────────────────────────────────────────
-      - key: NEXT_PUBLIC_API_URL
-        # NOTE: NEXT_PUBLIC_* vars are embedded at build time.
-        # Since frontend and backend share the same domain via Nginx, you can
-        # use a relative base or the full public URL.
-        value: "https://your-service-name.onrender.com"
+      # ── Initial Admin Account ─────────────────────────────────────────────────
+      - key: INITIAL_ADMIN_PASSWORD
+        value: REPLACE_WITH_STRONG_INITIAL_ADMIN_PASSWORD

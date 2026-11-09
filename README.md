@@ -17,7 +17,7 @@ client-management-system/
 ├── backend/                      # Django 5, Django REST Framework, dj-database-url
 │   ├── config/                   # Django settings, URLs, WSGI, ASGI
 │   ├── apps/
-│   │   ├── accounts/             # Custom User model, Roles (Admin, Advocate, Staff), Auth
+│   │   ├── accounts/             # Custom User model, Principal Advocate Profile & Auth
 │   │   ├── clients/              # Individual & Corporate Clients, Auto-reference CLI-YYYY-####
 │   │   ├── matters/              # Legal Files, Practice Areas, Auto-reference SWL-YYYY-####
 │   │   ├── documents/            # Private Document Vault, Authorization checks, Protected Downloads
@@ -56,8 +56,9 @@ client-management-system/
    ```bash
    python backend/manage.py migrate
    ```
-3. **Seed Initial Firm Data (Accounts, Sample Clients & Matters):**
+3. **Seed Initial Firm Data (Single Administrator Account):**
    ```bash
+   export INITIAL_ADMIN_PASSWORD="YourStrongSecurePassword"
    python backend/manage.py seed_cms
    ```
 4. **Run Automated Test Suite:**
@@ -96,20 +97,29 @@ client-management-system/
 
 ---
 
-## 4. Default Seeded Credentials
+## 4. Initial Administrator Account Setup
 
-| Username | Password | Role | Description |
-| :--- | :--- | :--- | :--- |
-| **`admin`** | `Advocate@2026!` | Administrator | Full administrative control & user management |
-| **`siwolo`** | `Advocate@2026!` | Advocate | Peter O. Siwolo (Senior Counsel / Managing Advocate) |
-| **`jane.wanjiru`** | `Advocate@2026!` | Advocate | Jane Wanjiru (Associate Advocate) |
-| **`clerk.omondi`** | `Advocate@2026!` | Authorized Staff | Brian Omondi (Legal Assistant / Clerk) |
+The system is configured for a single user (the Principal Advocate and Founder). Passwords are never hardcoded in the codebase.
+
+Set the initial administrator password via environment variable prior to running the seed command:
+
+```bash
+export INITIAL_ADMIN_PASSWORD="YourStrongSecurePassword"
+# Alternatively:
+# export INITIAL_ADVOCATE_PASSWORD="YourStrongSecurePassword"
+python backend/manage.py seed_cms
+```
+
+- **Username:** `admin`
+- **Initial Password:** Read from `INITIAL_ADMIN_PASSWORD` (or `INITIAL_ADVOCATE_PASSWORD`)
+- **Role:** Administrator (Superuser)
+- The seed command creates the account if it does not exist and preserves existing credentials on subsequent executions.
 
 ---
 
 ## 5. Security & Confidentiality Safeguards
 
 1. **No Public URLs:** Legal filings, affidavits, and contracts are uploaded to private disk storage (`backend/storage/documents/`) using randomized UUID storage keys to prevent path traversal or document identifier enumeration.
-2. **Restricted Confidentiality:** Documents classified as `Restricted to Assigned Advocate` reject access requests by unauthorized personnel with an HTTP 403 Forbidden response.
+2. **Restricted Confidentiality:** Documents classified as restricted reject unauthorized access requests with an HTTP 403 Forbidden response.
 3. **Audit Trail Logging:** All sensitive mutations (client registration, status updates, document uploads, file downloads, and hearings outcomes) write immutable records to the `AuditLog` table.
 4. **Backend-Enforced References:** Unique identifiers (`SWL-YYYY-####` for matters, `CLI-YYYY-####` for clients) are generated atomically within database transactions on the server.

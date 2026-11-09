@@ -12,7 +12,7 @@ class ClientManagementTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_jane',
-            email='jane@siwololaw.co.ke',
+            email='jane@siwoloadvocates.com',
             password='Password123!',
             first_name='Jane',
             last_name='Advocate',

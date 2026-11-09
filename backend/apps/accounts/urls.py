@@ -5,6 +5,7 @@ from .views import (
     LogoutView,
     CurrentUserView,
     ChangePasswordView,
+    FirmSettingsView,
     UserViewSet,
 )
 
@@ -16,5 +17,6 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', CurrentUserView.as_view(), name='auth-me'),
     path('auth/change-password/', ChangePasswordView.as_view(), name='auth-change-password'),
+    path('firm-settings/', FirmSettingsView.as_view(), name='firm-settings'),
     path('users/', include(router.urls)),
 ]

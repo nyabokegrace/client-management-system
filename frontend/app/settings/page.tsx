@@ -2,54 +2,54 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
-  Users,
-  Shield,
-  Key,
-  Plus,
+  User as UserIcon,
   Lock,
-  UserCheck,
-  UserX,
+  Shield,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
-import { Modal } from '../../components/Modal';
 import { api } from '../../lib/api';
-import { User, AuditLog, UserRole } from '../../types';
+import { User, AuditLog } from '../../types';
 
 export default function SettingsPage() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'security'>('users');
-  const [isAddUserOpen, setIsAddUserOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
-  // Add User Form
-  const [userData, setUserData] = useState({
-    username: '',
-    email: '',
+  // Profile Form State
+  const [profileData, setProfileData] = useState({
     first_name: '',
     last_name: '',
-    role: 'advocate' as UserRole,
+    email: '',
     phone_number: '',
-    password: '',
   });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
-  // Password Change Form
+  // Password Change Form State
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
   const [pwSuccess, setPwSuccess] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [usersRes, auditRes] = await Promise.all([
-        api.users.list(),
+      const [userRes, auditRes] = await Promise.all([
+        api.auth.me(),
         api.audit.list(),
       ]);
-      setUsers(Array.isArray(usersRes) ? usersRes : (usersRes as any).results || []);
+      setCurrentUser(userRes);
+      setProfileData({
+        first_name: userRes.first_name || '',
+        last_name: userRes.last_name || '',
+        email: userRes.email || '',
+        phone_number: userRes.phone_number || '',
+      });
       setAuditLogs(Array.isArray(auditRes) ? auditRes : (auditRes as any).results || []);
     } catch {
       // ignore
@@ -60,31 +60,23 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, []);
 
-  const handleCreateUser = async (e: React.FormEvent) => {
+  const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    setProfileError(null);
+    setProfileSuccess(false);
+
     try {
-      setSubmitting(true);
-      await api.request('/users/', {
-        method: 'POST',
-        body: JSON.stringify(userData),
-      });
-      setIsAddUserOpen(false);
-      setUserData({
-        username: '',
-        email: '',
-        first_name: '',
-        last_name: '',
-        role: 'advocate',
-        phone_number: '',
-        password: '',
-      });
-      fetchData();
+      setProfileSaving(true);
+      const updated = await api.auth.updateProfile(profileData);
+      setCurrentUser(updated);
+      setProfileSuccess(true);
+      setTimeout(() => setProfileSuccess(false), 4000);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Error creating user account');
+      setProfileError(err instanceof Error ? err.message : 'Failed to update profile');
     } finally {
-      setSubmitting(false);
+      setProfileSaving(false);
     }
   };
 
@@ -94,149 +86,210 @@ export default function SettingsPage() {
     setPwSuccess(false);
 
     try {
-      setSubmitting(true);
-      await api.request('/auth/change-password/', {
-        method: 'POST',
-        body: JSON.stringify({
-          old_password: oldPassword,
-          new_password: newPassword,
-        }),
+      setPwSaving(true);
+      await api.auth.changePassword({
+        old_password: oldPassword,
+        new_password: newPassword,
       });
       setPwSuccess(true);
       setOldPassword('');
       setNewPassword('');
+      setTimeout(() => setPwSuccess(false), 4000);
     } catch (err: unknown) {
       setPwError(err instanceof Error ? err.message : 'Failed to update password');
     } finally {
-      setSubmitting(false);
+      setPwSaving(false);
     }
   };
 
   return (
     <div className="flex-1 flex flex-col pb-12">
       <Header
-        title="Settings & Administration"
-        subtitle="Internal user permissions, authorized roles, compliance audit trails and security preferences"
+        title="Settings & Profile"
+        subtitle="Manage your advocate profile, credentials and review compliance audit trails"
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Settings' }]}
-        actions={
-          activeTab === 'users' && (
-            <button
-              onClick={() => setIsAddUserOpen(true)}
-              className="inline-flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
-              Add System User
-            </button>
-          )
-        }
       />
 
-      <div className="px-6 py-6 space-y-6">
-        {/* Navigation Tabs */}
-        <div className="border-b border-[#E5E7EB] flex space-x-6 text-xs font-medium">
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`pb-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'users'
-                ? 'border-black text-black'
-                : 'border-transparent text-gray-500 hover:text-black'
-            }`}
-          >
-            User & Role Management
-          </button>
-          <button
-            onClick={() => setActiveTab('audit')}
-            className={`pb-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'audit'
-                ? 'border-black text-black'
-                : 'border-transparent text-gray-500 hover:text-black'
-            }`}
-          >
-            Audit Trail Logs
-          </button>
-          <button
-            onClick={() => setActiveTab('security')}
-            className={`pb-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'security'
-                ? 'border-black text-black'
-                : 'border-transparent text-gray-500 hover:text-black'
-            }`}
-          >
-            Account Security & Credentials
-          </button>
-        </div>
+      <div className="px-6 py-6 space-y-8">
+        {/* Section: My Profile */}
+        <div>
+          <div className="mb-4">
+            <h2 className="text-sm font-bold text-[#111111] uppercase tracking-wider flex items-center">
+              <UserIcon className="w-4 h-4 mr-2" />
+              My Profile
+            </h2>
+            <p className="text-xs text-[#6B7280]">
+              Principal Advocate & Founder profile information and login credentials.
+            </p>
+          </div>
 
-        {/* Tab 1: Users */}
-        {activeTab === 'users' && (
-          <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
-                  <tr>
-                    <th className="px-5 py-3">Full Name & Username</th>
-                    <th className="px-5 py-3">Role</th>
-                    <th className="px-5 py-3">Email</th>
-                    <th className="px-5 py-3">Phone</th>
-                    <th className="px-5 py-3">Status</th>
-                    <th className="px-5 py-3">Created</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E5E7EB]">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
-                        Loading users list...
-                      </td>
-                    </tr>
-                  ) : users.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
-                        No user accounts found.
-                      </td>
-                    </tr>
-                  ) : (
-                    users.map((u) => (
-                      <tr key={u.id} className="hover:bg-gray-50">
-                        <td className="px-5 py-3.5">
-                          <div className="font-semibold text-gray-900">{u.full_name}</div>
-                          <div className="text-[11px] text-gray-400 font-mono">@{u.username}</div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <Badge
-                            variant={
-                              u.role === 'admin'
-                                ? 'danger'
-                                : u.role === 'advocate'
-                                ? 'info'
-                                : 'default'
-                            }
-                            size="sm"
-                          >
-                            {u.role.toUpperCase()}
-                          </Badge>
-                        </td>
-                        <td className="px-5 py-3.5 text-gray-700">{u.email}</td>
-                        <td className="px-5 py-3.5 text-gray-700">{u.phone_number || '—'}</td>
-                        <td className="px-5 py-3.5">
-                          <Badge variant={u.is_active ? 'success' : 'default'} size="sm">
-                            {u.is_active ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </td>
-                        <td className="px-5 py-3.5 text-gray-500 text-[11px]">
-                          {new Date(u.created_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Card 1: Profile Information */}
+            <div className="bg-white border border-[#E5E7EB] rounded p-6 shadow-sm">
+              <h3 className="text-xs font-bold text-[#111111] uppercase tracking-wider mb-2">
+                Personal & Contact Details
+              </h3>
+              <p className="text-xs text-[#6B7280] mb-5">
+                Update your name, primary phone number and correspondence email address.
+              </p>
+
+              {profileSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-center">
+                  <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0" />
+                  Profile updated successfully.
+                </div>
+              )}
+              {profileError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                  {profileError}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdateProfile} className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                      First Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.first_name}
+                      onChange={(e) => setProfileData({ ...profileData, first_name: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                      Last Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.last_name}
+                      onChange={(e) => setProfileData({ ...profileData, last_name: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                    Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={profileData.email}
+                    onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={profileData.phone_number}
+                    onChange={(e) => setProfileData({ ...profileData, phone_number: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                    placeholder="+254..."
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={profileSaving}
+                    className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
+                  >
+                    {profileSaving ? 'Saving Changes...' : 'Save Profile'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Card 2: Password Change */}
+            <div className="bg-white border border-[#E5E7EB] rounded p-6 shadow-sm">
+              <h3 className="text-xs font-bold text-[#111111] uppercase tracking-wider mb-2 flex items-center">
+                <Lock className="w-4 h-4 mr-2" />
+                Change Password
+              </h3>
+              <p className="text-xs text-[#6B7280] mb-5">
+                Ensure your account uses an 8+ character strong password to protect confidential client records.
+              </p>
+
+              {pwSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-center">
+                  <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0" />
+                  Password updated successfully.
+                </div>
+              )}
+              {pwError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                  {pwError}
+                </div>
+              )}
+
+              <form onSubmit={handleChangePassword} className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                    Current Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                    New Password * (Min 8 characters)
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={pwSaving}
+                    className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
+                  >
+                    {pwSaving ? 'Updating Password...' : 'Update Password'}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Tab 2: Audit Logs */}
-        {activeTab === 'audit' && (
-          <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
+        {/* Section: Audit Trail Logs (Beneath Profile) */}
+        <div>
+          <div className="mb-4">
+            <h2 className="text-sm font-bold text-[#111111] uppercase tracking-wider flex items-center">
+              <Shield className="w-4 h-4 mr-2" />
+              Audit Trail Logs
+            </h2>
+            <p className="text-xs text-[#6B7280]">
+              Immutable audit history of legal files, documents, and records mutations.
+            </p>
+          </div>
+
+          <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
@@ -265,7 +318,9 @@ export default function SettingsPage() {
                     auditLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-gray-50">
                         <td className="px-5 py-3 text-[11px] text-gray-500 font-mono whitespace-nowrap">
-                          {new Date(log.created_at).toLocaleString()}
+                          {new Date(log.created_at).toLocaleString('en-GB', {
+                            timeZone: 'Africa/Nairobi',
+                          })}
                         </td>
                         <td className="px-5 py-3 font-semibold text-gray-900">
                           {log.actor_name || 'System'}
@@ -288,181 +343,8 @@ export default function SettingsPage() {
               </table>
             </div>
           </div>
-        )}
-
-        {/* Tab 3: Security & Change Password */}
-        {activeTab === 'security' && (
-          <div className="max-w-md bg-white border border-[#E5E7EB] rounded p-6">
-            <h3 className="text-xs font-bold text-[#111111] uppercase tracking-wider mb-2 flex items-center">
-              <Lock className="w-4 h-4 mr-2" />
-              Change Personal Password
-            </h3>
-            <p className="text-xs text-[#6B7280] mb-5">
-              Ensure your account uses an 8+ character strong password to protect confidential client records.
-            </p>
-
-            {pwSuccess && (
-              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
-                Password updated successfully.
-              </div>
-            )}
-            {pwError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-                {pwError}
-              </div>
-            )}
-
-            <form onSubmit={handleChangePassword} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                  Current Password *
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={oldPassword}
-                  onChange={(e) => setOldPassword(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                  New Password * (Min 8 characters)
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
-              >
-                {submitting ? 'Updating Password...' : 'Update Password'}
-              </button>
-            </form>
-          </div>
-        )}
+        </div>
       </div>
-
-      {/* Add User Modal */}
-      <Modal
-        isOpen={isAddUserOpen}
-        onClose={() => setIsAddUserOpen(false)}
-        title="Add Internal System User"
-        description="Provision an individual account for counsel or authorized support staff."
-        maxWidth="lg"
-      >
-        <form onSubmit={handleCreateUser} className="space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                First Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={userData.first_name}
-                onChange={(e) => setUserData({ ...userData, first_name: e.target.value })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Last Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={userData.last_name}
-                onChange={(e) => setUserData({ ...userData, last_name: e.target.value })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Username *
-              </label>
-              <input
-                type="text"
-                required
-                value={userData.username}
-                onChange={(e) => setUserData({ ...userData, username: e.target.value })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Role *
-              </label>
-              <select
-                value={userData.role}
-                onChange={(e) => setUserData({ ...userData, role: e.target.value as UserRole })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              >
-                <option value="advocate">Advocate (Counsel)</option>
-                <option value="staff">Authorized Staff (Clerk / Assistant)</option>
-                <option value="admin">Administrator</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Email Address *
-              </label>
-              <input
-                type="email"
-                required
-                value={userData.email}
-                onChange={(e) => setUserData({ ...userData, email: e.target.value })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Initial Password * (Min 8 chars)
-              </label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={userData.password}
-                onChange={(e) => setUserData({ ...userData, password: e.target.value })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
-            </div>
-          </div>
-
-          <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
-            <button
-              type="button"
-              onClick={() => setIsAddUserOpen(false)}
-              className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
-            >
-              {submitting ? 'Creating...' : 'Create Account'}
-            </button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

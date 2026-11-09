@@ -13,7 +13,7 @@ class TaskTests(TestCase):
         self.client = APIClient()
         self.advocate = User.objects.create_user(
             username='adv_tasks',
-            email='tasks@siwololaw.co.ke',
+            email='tasks@siwoloadvocates.com',
             password='Password123!',
             first_name='Lead',
             last_name='Counsel',

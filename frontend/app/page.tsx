@@ -304,7 +304,7 @@ export default function DashboardPage() {
                           {matter.title}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
-                          Client: {matter.client_name || 'N/A'} • Assigned: {matter.assigned_advocate_name || 'Unassigned'}
+                          Client: {matter.client_name || 'N/A'}
                         </p>
                       </div>
                       <span className="text-[11px] text-gray-400">
