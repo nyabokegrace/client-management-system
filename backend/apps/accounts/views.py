@@ -1,3 +1,5 @@
+from datetime import timedelta
+from django.utils import timezone
 from django.conf import settings
 from config.firm_settings import get_firm_details
 from rest_framework import generics, status, viewsets
@@ -7,6 +9,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .models import User, UserRole
+from .throttling import LoginBurstRateThrottle
 from .serializers import (
     UserSerializer,
     UserProfileUpdateSerializer,
@@ -15,6 +18,21 @@ from .serializers import (
     ChangePasswordSerializer,
 )
 from .permissions import IsAdministrator, IsInternalStaff
+
+
+class HealthCheckView(APIView):
+    """
+    Service health check endpoint for monitoring, uptime probes, and Render.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        return Response({
+            'status': 'healthy',
+            'service': 'Siwolo P.O Law Advocates CMS',
+            'timezone': getattr(settings, 'TIME_ZONE', 'Africa/Nairobi'),
+        }, status=status.HTTP_200_OK)
 
 
 class FirmSettingsView(APIView):
@@ -26,12 +44,16 @@ class FirmSettingsView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginBurstRateThrottle]
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        token, _ = Token.objects.get_or_create(user=user)
+        token, created = Token.objects.get_or_create(user=user)
+        if not created and (timezone.now() - token.created > timedelta(hours=12)):
+            token.delete()
+            token = Token.objects.create(user=user)
 
         user_data = UserSerializer(user).data
         user_data['firm'] = get_firm_details()

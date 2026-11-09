@@ -1,15 +1,20 @@
 import os
+from datetime import timedelta
 from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
+from django.core.cache import cache
 from django.core.management import call_command
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.authtoken.models import Token
 from .models import User, UserRole
 
 
 class AccountsAuthenticationTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.admin_user = User.objects.create_user(
             username='admin_test',
@@ -27,6 +32,9 @@ class AccountsAuthenticationTests(TestCase):
             last_name='Siwolo',
             role=UserRole.ADVOCATE
         )
+
+    def tearDown(self):
+        cache.clear()
 
     def test_login_success(self):
         url = reverse('auth-login')
@@ -104,3 +112,32 @@ class AccountsAuthenticationTests(TestCase):
         self.assertEqual(user.phone_number, '+254792300520')
         self.assertTrue(user.is_superuser)
         self.assertTrue(user.check_password('TestSeededPassword@2026'))
+
+    def test_health_check_endpoint(self):
+        url = reverse('health-check')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'healthy')
+        self.assertEqual(response.data['service'], 'Siwolo P.O Law Advocates CMS')
+
+    def test_expiring_token_authentication(self):
+        token = Token.objects.create(user=self.admin_user)
+        # Manually backdate token creation to 13 hours ago
+        Token.objects.filter(pk=token.pk).update(created=timezone.now() - timedelta(hours=13))
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        url = reverse('auth-me')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('Token has expired', str(response.data))
+
+    def test_login_burst_throttling(self):
+        url = reverse('auth-login')
+        # 5 failed login attempts
+        for _ in range(5):
+            res = self.client.post(url, {'username': 'admin_test', 'password': 'WrongPassword'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 6th attempt should be throttled
+        throttled_res = self.client.post(url, {'username': 'admin_test', 'password': 'WrongPassword'}, format='json')
+        self.assertEqual(throttled_res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)

@@ -27,6 +27,7 @@ class ClientReportSerializer(serializers.ModelSerializer):
             'period_start',
             'period_end',
             'period_covered',
+            'update_ids',
             'generated_at',
             'generated_at_display',
             'generated_by',

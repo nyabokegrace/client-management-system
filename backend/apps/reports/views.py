@@ -409,8 +409,12 @@ class GenerateClientReportView(APIView):
                     {'error': 'No previous report has been marked as sent for this matter.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            period_start = last_sent.sent_at
-            updates_qs = updates_qs.filter(event_datetime__gte=period_start)
+            cutoff = last_sent.generated_at
+            period_start = cutoff
+            # Cutoff is based on when update was entered (created_at), not event_datetime, so backdated updates are included
+            updates_qs = updates_qs.filter(created_at__gt=cutoff)
+            if last_sent.update_ids:
+                updates_qs = updates_qs.exclude(id__in=last_sent.update_ids)
             period_covered = f"Updates since last sent report ({format_nairobi_datetime(last_sent.sent_at)})"
 
         elif mode == ReportMode.CUSTOM_RANGE:
@@ -493,6 +497,7 @@ class GenerateClientReportView(APIView):
             period_start=period_start,
             period_end=period_end,
             period_covered=period_covered,
+            update_ids=[u.id for u in updates],
             generated_at=now,
             generated_by=request.user,
         )

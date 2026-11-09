@@ -13,9 +13,8 @@ services:
     # Render builds the image from this Dockerfile at the repo root
     dockerfilePath: ./Dockerfile
 
-    # Health check — Django login endpoint returns 405 (Method Not Allowed)
-    # on GET, which confirms the app is running.
-    healthCheckPath: /api/v1/auth/login/
+    # Health check endpoint
+    healthCheckPath: /api/v1/health/
 
     # Free tier: Render spins down idle services; upgrade to avoid cold starts.
     # plan: starter

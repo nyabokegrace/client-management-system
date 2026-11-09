@@ -33,6 +33,7 @@ class ClientReport(models.Model):
     period_start = models.DateTimeField(null=True, blank=True)
     period_end = models.DateTimeField(null=True, blank=True)
     period_covered = models.CharField(max_length=255)
+    update_ids = models.JSONField(default=list, blank=True)
     generated_at = models.DateTimeField(default=timezone.now)
     generated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
