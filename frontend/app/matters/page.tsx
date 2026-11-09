@@ -17,6 +17,7 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
+import { getNairobiDateInputValue } from '../../lib/dates';
 import { Matter, Client, Contact, ContactType, MatterPriority, MatterStatus } from '../../types';
 
 export default function MattersPage() {
@@ -111,7 +112,7 @@ export default function MattersPage() {
 
   const openCreateModal = async () => {
     setEditingMatter(null);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getNairobiDateInputValue();
     setFormData({
       matter_reference: '',
       title: '',

@@ -17,6 +17,12 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
+import {
+  getNairobiDatetimeInputValue,
+  formatNairobiDateTime,
+  formatNairobiDate,
+  formatNairobiTime,
+} from '../../lib/dates';
 import { Hearing, Matter } from '../../types';
 
 export default function HearingsPage() {
@@ -76,7 +82,7 @@ export default function HearingsPage() {
     setFormData({
       matter: 0,
       hearing_type: 'mention',
-      hearing_date: '',
+      hearing_date: getNairobiDatetimeInputValue(),
       court: '',
       court_case_number: '',
       location_details: '',
@@ -90,7 +96,7 @@ export default function HearingsPage() {
     setFormData({
       matter: h.matter,
       hearing_type: h.hearing_type,
-      hearing_date: h.hearing_date ? h.hearing_date.slice(0, 16) : '',
+      hearing_date: getNairobiDatetimeInputValue(h.hearing_date),
       court: h.court || '',
       court_case_number: h.court_case_number || '',
       location_details: h.location_details || '',
@@ -232,20 +238,11 @@ export default function HearingsPage() {
                     <tr key={h.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3.5 whitespace-nowrap">
                         <div className="font-bold text-gray-900">
-                          {new Date(h.hearing_date).toLocaleDateString('en-GB', {
-                            timeZone: 'Africa/Nairobi',
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
+                          {formatNairobiDate(h.hearing_date)}
                         </div>
                         <div className="text-[11px] text-gray-500 flex items-center">
                           <Clock className="w-3 h-3 mr-1 text-gray-400" />
-                          {new Date(h.hearing_date).toLocaleTimeString('en-GB', {
-                            timeZone: 'Africa/Nairobi',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatNairobiTime(h.hearing_date)}
                         </div>
                       </td>
                       <td className="px-5 py-3.5">
@@ -530,7 +527,7 @@ export default function HearingsPage() {
           title="Delete Court Hearing"
           recordName={deletingHearing.matter_reference || deletingHearing.matter_title || 'Court Hearing'}
           recordReference={deletingHearing.matter_reference}
-          message={`Are you sure you want to permanently delete this hearing on ${new Date(deletingHearing.hearing_date).toLocaleDateString()} for matter ${deletingHearing.matter_reference || deletingHearing.matter_title || ''}? This action cannot be undone.`}
+          message={`Are you sure you want to permanently delete this hearing on ${formatNairobiDateTime(deletingHearing.hearing_date)} for matter ${deletingHearing.matter_reference || deletingHearing.matter_title || ''}? This action cannot be undone.`}
         />
       )}
     </div>

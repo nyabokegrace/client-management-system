@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from config.date_utils import format_nairobi_datetime
 
 from .models import Hearing, HearingStatus
 from .serializers import HearingSerializer
@@ -58,7 +59,7 @@ class HearingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def delete_summary(self, request, pk=None):
         hearing = self.get_object()
-        date_str = hearing.hearing_date.strftime('%d %b %Y, %I:%M %p') if hearing.hearing_date else 'Scheduled'
+        date_str = format_nairobi_datetime(hearing.hearing_date) if hearing.hearing_date else 'Scheduled'
         ref = hearing.matter.matter_reference if hearing.matter else ''
         return Response({
             'name': f"{hearing.get_hearing_type_display()} on {date_str}",

@@ -4,6 +4,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.db.models import Count, Q
 from django.utils import timezone
+from config.date_utils import format_nairobi_datetime, format_nairobi_date
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -186,7 +187,7 @@ class ExportReportPDFView(APIView):
             spaceAfter=0,
         )
 
-        generated_at = timezone.now().strftime('%d %B %Y, %H:%M %Z')
+        generated_at = format_nairobi_datetime(timezone.now())
         usable_width = (landscape(A4)[0] if use_landscape else A4[0]) - 3 * cm
 
         logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
@@ -287,7 +288,7 @@ class ExportReportPDFView(APIView):
                     c.phone_number,
                     c.email,
                     c.get_status_display(),
-                    c.created_at.strftime('%Y-%m-%d'),
+                    format_nairobi_date(c.created_at),
                 ]
                 for c in Client.objects.all().order_by('-created_at')
             ]
@@ -302,8 +303,8 @@ class ExportReportPDFView(APIView):
                     t.assigned_to.full_name if t.assigned_to else 'Unassigned',
                     t.get_priority_display(),
                     t.get_status_display(),
-                    t.due_date.strftime('%Y-%m-%d %H:%M') if t.due_date else 'N/A',
-                    t.created_at.strftime('%Y-%m-%d'),
+                    format_nairobi_datetime(t.due_date),
+                    format_nairobi_date(t.created_at),
                 ]
                 for t in Task.objects.select_related('matter', 'assigned_to').all().order_by('due_date')
             ]
@@ -337,7 +338,7 @@ class ExportReportPDFView(APIView):
                     m.opposing_contact.name if m.opposing_contact else (m.opposing_advocate or 'N/A'),
                     m.court,
                     m.case_number,
-                    m.date_opened.strftime('%Y-%m-%d') if m.date_opened else 'N/A',
+                    format_nairobi_date(m.date_opened),
                 ]
                 for m in Matter.objects.select_related('client', 'assigned_advocate', 'opposing_contact').all().order_by('-created_at')
             ]

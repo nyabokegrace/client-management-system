@@ -56,3 +56,17 @@ class TaskTests(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(any(t['id'] == task.id for t in response.data))
+
+    def test_task_datetime_preserves_nairobi_time(self):
+        from config.date_utils import format_nairobi_datetime
+        url = reverse('task-list')
+        data = {
+            'title': 'File Originating Summons',
+            'priority': TaskPriority.HIGH,
+            'status': TaskStatus.TODO,
+            'due_date': '2026-11-08T17:00',
+        }
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        task = Task.objects.get(pk=response.data['id'])
+        self.assertEqual(format_nairobi_datetime(task.due_date), '8 Nov 2026, 5:00 pm')

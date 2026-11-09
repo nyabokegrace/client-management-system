@@ -17,6 +17,11 @@ import {
 import { Header } from '../components/Header';
 import { Badge } from '../components/Badge';
 import { api } from '../lib/api';
+import {
+  formatNairobiDateTime,
+  formatNairobiDate,
+  formatNairobiTime,
+} from '../lib/dates';
 import { DashboardSummary } from '../types';
 
 export default function DashboardPage() {
@@ -200,10 +205,10 @@ export default function DashboardPage() {
                       </div>
                       <div className="text-right">
                         <span className="text-xs font-semibold text-[#111111]">
-                          {new Date(hearing.hearing_date).toLocaleDateString()}
+                          {formatNairobiDate(hearing.hearing_date)}
                         </span>
                         <p className="text-[10px] text-gray-500">
-                          {new Date(hearing.hearing_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {formatNairobiTime(hearing.hearing_date)}
                         </p>
                       </div>
                     </div>
@@ -256,7 +261,7 @@ export default function DashboardPage() {
                         )}
                       </div>
                       <div className="text-right text-[11px] text-[#6B7280]">
-                        {task.due_date ? `Due: ${new Date(task.due_date).toLocaleDateString()}` : 'No due date'}
+                        {task.due_date ? `Due: ${formatNairobiDateTime(task.due_date)}` : 'No due date'}
                       </div>
                     </div>
                   </div>
@@ -308,7 +313,7 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <span className="text-[11px] text-gray-400">
-                        {new Date(matter.updated_at).toLocaleDateString()}
+                        {formatNairobiDate(matter.updated_at)}
                       </span>
                     </div>
                   </div>
@@ -348,7 +353,7 @@ export default function DashboardPage() {
                       <p className="text-[11px] text-gray-400 truncate">{log.target_repr}</p>
                     </div>
                     <span className="text-[10px] text-gray-400 flex-shrink-0">
-                      {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatNairobiDateTime(log.created_at)}
                     </span>
                   </div>
                 ))

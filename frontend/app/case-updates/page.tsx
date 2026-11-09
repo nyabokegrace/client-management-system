@@ -18,6 +18,7 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
+import { getNairobiDatetimeInputValue, formatNairobiDateTime } from '../../lib/dates';
 import { CaseUpdate, Matter } from '../../types';
 
 export default function CaseUpdatesPage() {
@@ -85,7 +86,7 @@ export default function CaseUpdatesPage() {
       matter: 0,
       title: '',
       category: 'court_appearance',
-      event_datetime: '',
+      event_datetime: getNairobiDatetimeInputValue(),
       description: '',
     });
     setMatterSearch('');
@@ -98,7 +99,7 @@ export default function CaseUpdatesPage() {
       matter: u.matter,
       title: u.title,
       category: u.category,
-      event_datetime: u.event_datetime ? u.event_datetime.slice(0, 16) : '',
+      event_datetime: getNairobiDatetimeInputValue(u.event_datetime),
       description: u.description || '',
     });
     const foundMatter = matters.find((m) => m.id === u.matter);
@@ -250,14 +251,7 @@ export default function CaseUpdatesPage() {
                           {item.category_display || item.category}
                         </Badge>
                         <span className="text-[11px] text-gray-400">
-                          {new Date(item.event_datetime).toLocaleString('en-GB', {
-                            timeZone: 'Africa/Nairobi',
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatNairobiDateTime(item.event_datetime)}
                         </span>
                       </div>
 

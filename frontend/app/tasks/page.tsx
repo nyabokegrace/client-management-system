@@ -15,6 +15,7 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
+import { getNairobiDatetimeInputValue, formatNairobiDateTime } from '../../lib/dates';
 import { Task, Matter, TaskPriority, TaskStatus } from '../../types';
 
 export default function TasksPage() {
@@ -81,7 +82,7 @@ export default function TasksPage() {
       matter: task.matter || 0,
       priority: task.priority,
       status: task.status,
-      due_date: task.due_date ? task.due_date.slice(0, 16) : '',
+      due_date: getNairobiDatetimeInputValue(task.due_date),
       description: task.description || '',
     });
     setIsModalOpen(true);
@@ -246,7 +247,7 @@ export default function TasksPage() {
                             <Badge variant="danger" size="sm">Overdue</Badge>
                           )}
                           <span className={`text-[11px] ${task.is_overdue ? 'text-rose-700 font-bold' : 'text-gray-600'}`}>
-                            {task.due_date ? new Date(task.due_date).toLocaleString('en-GB', { timeZone: 'Africa/Nairobi' }) : 'No deadline'}
+                            {task.due_date ? formatNairobiDateTime(task.due_date) : 'No deadline'}
                           </span>
                         </div>
                       </td>

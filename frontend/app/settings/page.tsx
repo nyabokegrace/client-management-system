@@ -11,6 +11,7 @@ import {
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { api } from '../../lib/api';
+import { formatNairobiDateTime } from '../../lib/dates';
 import { User, AuditLog } from '../../types';
 
 export default function SettingsPage() {
@@ -318,9 +319,7 @@ export default function SettingsPage() {
                     auditLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-gray-50">
                         <td className="px-5 py-3 text-[11px] text-gray-500 font-mono whitespace-nowrap">
-                          {new Date(log.created_at).toLocaleString('en-GB', {
-                            timeZone: 'Africa/Nairobi',
-                          })}
+                          {formatNairobiDateTime(log.created_at)}
                         </td>
                         <td className="px-5 py-3 font-semibold text-gray-900">
                           {log.actor_name || 'System'}

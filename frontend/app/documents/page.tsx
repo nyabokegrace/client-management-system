@@ -18,6 +18,7 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
+import { formatNairobiDateTime } from '../../lib/dates';
 import { Document, Client, Matter } from '../../types';
 
 export default function DocumentsPage() {
@@ -338,7 +339,7 @@ export default function DocumentsPage() {
                         {doc.file_size_display}
                       </td>
                       <td className="px-5 py-3.5 text-gray-500 text-[11px]">
-                        {new Date(doc.created_at).toLocaleDateString()}
+                        {formatNairobiDateTime(doc.created_at)}
                       </td>
                       <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
                         <button
