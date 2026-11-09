@@ -43,6 +43,25 @@ export interface Client {
   updated_at: string;
 }
 
+export type ContactType = 'advocate' | 'law_firm' | 'other';
+
+export interface Contact {
+  id: number;
+  name: string;
+  contact_type: ContactType;
+  contact_type_display?: string;
+  firm_name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  created_by?: number | null;
+  created_by_details?: User | null;
+  matters_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type MatterStatus =
   | 'new'
   | 'active'
@@ -62,6 +81,7 @@ export interface Matter {
   client_name?: string;
   client_reference?: string;
   client_details?: Client;
+  location?: string;
   matter_type: string;
   matter_type_display?: string;
   description?: string;
@@ -78,6 +98,9 @@ export interface Matter {
   case_number?: string;
   opposing_party?: string;
   opposing_advocate?: string;
+  opposing_contact?: number | null;
+  opposing_contact_name?: string;
+  opposing_contact_details?: Contact | null;
   date_opened: string;
   date_closed?: string | null;
   internal_notes?: string;

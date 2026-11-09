@@ -43,7 +43,7 @@ class MatterManagementTests(TestCase):
         }
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data['matter_reference'].startswith('SWL-'))
+        self.assertTrue(response.data['matter_reference'].startswith('SP/'))
         self.assertEqual(response.data['status'], MatterStatus.NEW)
 
     def test_matter_status_change(self):
@@ -134,3 +134,52 @@ class MatterManagementTests(TestCase):
         self.assertIsNotNone(audit)
         self.assertIn('priority', audit.details.get('changes', {}))
         self.assertEqual(audit.details['changes']['priority']['new'], MatterPriority.URGENT)
+
+    def test_matter_legacy_reference_and_duplicate_rejection(self):
+        url = reverse('matter-list')
+        data = {
+            'matter_reference': 'LEGACY/OLD/2018/001',
+            'title': 'Legacy Estate Case',
+            'client': self.client_record.id,
+            'matter_type': MatterType.FAMILY,
+            'priority': MatterPriority.NORMAL,
+            'location': 'Nakuru',
+            'date_opened': '2018-02-01',
+        }
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['matter_reference'], 'LEGACY/OLD/2018/001')
+        self.assertEqual(response.data['location'], 'Nakuru')
+
+        # Duplicate reference must be refused with clear error
+        data2 = {
+            'matter_reference': 'LEGACY/OLD/2018/001',
+            'title': 'Another Case with Same Ref',
+            'client': self.client_record.id,
+        }
+        dup_resp = self.client.post(url, data2, format='json')
+        self.assertEqual(dup_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('matter_reference', dup_resp.data)
+        self.assertIn('already exists', str(dup_resp.data['matter_reference']))
+
+    def test_suggested_reference_increment_and_year_from_date_opened(self):
+        # Create a matter with reference SP/Nairobi/CIV/14/2023
+        Matter.objects.create(
+            matter_reference='SP/Nairobi/CIV/14/2023',
+            title='Existing Matter 14',
+            client=self.client_record,
+            location='Nairobi',
+            created_by=self.advocate
+        )
+
+        # Call suggest_reference endpoint for Kisumu with date_opened in 2026
+        sug_url = reverse('matter-suggest-reference')
+        resp = self.client.get(sug_url, {'location': 'Kisumu', 'date_opened': '2026-05-10'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        # Next file number should be 15 (14 + 1), year 2026
+        self.assertEqual(resp.data['suggested_reference'], 'SP/Kisumu//15/2026')
+
+        # Year comes from date_opened, not today's date
+        resp2 = self.client.get(sug_url, {'location': 'Mombasa', 'date_opened': '2021-11-01'})
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp2.data['suggested_reference'], 'SP/Mombasa//15/2021')

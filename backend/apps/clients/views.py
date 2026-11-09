@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -97,3 +98,18 @@ class ClientViewSet(viewsets.ModelViewSet):
             target_repr=f"{client.client_reference} - {client.display_name}"
         )
         return Response({'status': 'Client archived successfully.', 'client': ClientSerializer(client).data})
+
+    @action(detail=False, methods=['get'])
+    def suggest_reference(self, request):
+        year = timezone.now().year
+        prefix = f"CLI-{year}-"
+        last_client = Client.objects.filter(client_reference__startswith=prefix).order_by('-id').first()
+        if last_client and last_client.client_reference:
+            try:
+                last_seq = int(last_client.client_reference.split('-')[-1])
+                seq = last_seq + 1
+            except (ValueError, IndexError):
+                seq = 1
+        else:
+            seq = 1
+        return Response({'suggested_reference': f"{prefix}{seq:04d}"})

@@ -1,6 +1,7 @@
 import {
   User,
   Client,
+  Contact,
   Matter,
   Document,
   CaseUpdate,
@@ -198,6 +199,51 @@ class ApiClient {
         message: string;
       }>(`/clients/${id}/delete_summary/`);
     },
+    suggestReference: async () => {
+      return this.request<{ suggested_reference: string }>(
+        '/clients/suggest_reference/'
+      );
+    },
+  };
+
+  // Contacts
+  contacts = {
+    list: async (params?: Record<string, string | number>) => {
+      const query = params
+        ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
+        : '';
+      return this.request<{ results: Contact[]; count: number } | Contact[]>(
+        `/contacts/${query}`
+      );
+    },
+    get: async (id: number) => {
+      return this.request<Contact>(`/contacts/${id}/`);
+    },
+    create: async (data: Partial<Contact>) => {
+      return this.request<Contact>('/contacts/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    update: async (id: number, data: Partial<Contact>) => {
+      return this.request<Contact>(`/contacts/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+    delete: async (id: number) => {
+      return this.request(`/contacts/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        reference: string;
+        matters_count: number;
+        blocked: boolean;
+        blocked_reason?: string | null;
+        message: string;
+      }>(`/contacts/${id}/delete_summary/`);
+    },
   };
 
   // Matters
@@ -238,6 +284,21 @@ class ApiClient {
         documents_count: number;
         message: string;
       }>(`/matters/${id}/delete_summary/`);
+    },
+    suggestReference: async (params?: {
+      location?: string;
+      date_opened?: string;
+      matter_type?: string;
+    }) => {
+      const query = params
+        ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
+        : '';
+      return this.request<{ suggested_reference: string }>(
+        `/matters/suggest_reference/${query}`
+      );
+    },
+    locations: async () => {
+      return this.request<string[]>('/matters/locations/');
     },
     changeStatus: async (id: number, status: string) => {
       return this.request<{ status: string; matter: Matter }>(

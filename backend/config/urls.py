@@ -12,6 +12,7 @@ urlpatterns = [
     # API v1 Versioned Endpoints
     path('api/v1/', include([
         path('', include('apps.accounts.urls')),
+        path('contacts/', include('apps.contacts.urls')),
         path('clients/', include('apps.clients.urls')),
         path('matters/', include('apps.matters.urls')),
         path('documents/', include('apps.documents.urls')),

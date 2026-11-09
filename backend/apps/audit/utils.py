@@ -21,11 +21,15 @@ def serialize_value(val):
             'display_name',
             getattr(
                 val,
-                'title',
+                'name',
                 getattr(
                     val,
-                    'matter_reference',
-                    getattr(val, 'client_reference', getattr(val, 'full_name', str(val)))
+                    'title',
+                    getattr(
+                        val,
+                        'matter_reference',
+                        getattr(val, 'client_reference', getattr(val, 'full_name', str(val)))
+                    )
                 )
             )
         )
@@ -50,7 +54,7 @@ def record_create_audit(actor, module, instance, target_repr=None):
     name = getattr(
         instance,
         'title',
-        getattr(instance, 'display_name', getattr(instance, 'original_filename', str(instance)))
+        getattr(instance, 'name', getattr(instance, 'display_name', getattr(instance, 'original_filename', str(instance))))
     )
     if not target_repr:
         target_repr = f"{ref} - {name}" if ref else name
@@ -82,7 +86,7 @@ def record_update_audit(actor, module, old_instance, new_instance, target_repr=N
     name = getattr(
         new_instance,
         'title',
-        getattr(new_instance, 'display_name', getattr(new_instance, 'original_filename', str(new_instance)))
+        getattr(new_instance, 'name', getattr(new_instance, 'display_name', getattr(new_instance, 'original_filename', str(new_instance))))
     )
     if not target_repr:
         target_repr = f"{ref} - {name}" if ref else name
@@ -117,7 +121,7 @@ def record_delete_audit(actor, module, instance, target_repr=None):
     name = getattr(
         instance,
         'title',
-        getattr(instance, 'display_name', getattr(instance, 'original_filename', str(instance)))
+        getattr(instance, 'name', getattr(instance, 'display_name', getattr(instance, 'original_filename', str(instance))))
     )
     if not target_repr:
         target_repr = f"{ref} - {name}" if ref else name

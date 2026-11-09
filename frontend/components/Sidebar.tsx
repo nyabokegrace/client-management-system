@@ -18,6 +18,7 @@ import {
   Menu,
   X,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { User } from '../types';
@@ -48,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentUser: initialUser }) =>
   const navigation = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Clients', href: '/clients', icon: Users },
+    { name: 'Contacts', href: '/contacts', icon: UserCheck },
     { name: 'Matters & Legal Files', href: '/matters', icon: Briefcase },
     { name: 'Documents', href: '/documents', icon: FileText },
     { name: 'Case Progress', href: '/case-updates', icon: Clock },

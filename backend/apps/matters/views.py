@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from .models import Matter, MatterStatus
+from .models import Matter, MatterStatus, generate_suggested_matter_reference
 from .serializers import MatterListSerializer, MatterDetailSerializer
 from apps.audit.models import AuditAction, AuditModule, log_activity
 from apps.audit.utils import record_create_audit, record_update_audit, record_delete_audit
@@ -16,22 +16,26 @@ class MatterViewSet(viewsets.ModelViewSet):
     """
     CRUD for Legal Matters with status tracking, assignments and audit trail.
     """
-    queryset = Matter.objects.all().select_related('client', 'assigned_advocate', 'created_by').prefetch_related('supporting_staff')
+    queryset = Matter.objects.all().select_related('client', 'assigned_advocate', 'created_by', 'opposing_contact').prefetch_related('supporting_staff')
     permission_classes = [IsAuthenticated, IsInternalStaff]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'priority', 'matter_type', 'client', 'assigned_advocate']
+    filterset_fields = ['status', 'priority', 'matter_type', 'client', 'assigned_advocate', 'location', 'opposing_contact']
     search_fields = [
         'matter_reference',
         'title',
         'case_number',
         'court',
+        'location',
         'opposing_party',
+        'opposing_advocate',
+        'opposing_contact__name',
+        'opposing_contact__firm_name',
         'client__client_reference',
         'client__first_name',
         'client__last_name',
         'client__organization_name',
     ]
-    ordering_fields = ['created_at', 'date_opened', 'priority', 'status', 'matter_reference']
+    ordering_fields = ['created_at', 'date_opened', 'priority', 'status', 'matter_reference', 'location']
     ordering = ['-created_at']
 
     def get_permissions(self):
@@ -99,3 +103,21 @@ class MatterViewSet(viewsets.ModelViewSet):
             details={'changes': {'status': {'old': old_status, 'new': new_status}}}
         )
         return Response({'status': f'Status updated to {matter.get_status_display()}', 'matter': MatterDetailSerializer(matter).data})
+
+    @action(detail=False, methods=['get'])
+    def suggest_reference(self, request):
+        location = request.query_params.get('location', '')
+        date_opened = request.query_params.get('date_opened', '')
+        matter_type = request.query_params.get('matter_type', '')
+        suggestion = generate_suggested_matter_reference(location, date_opened, matter_type)
+        return Response({'suggested_reference': suggestion})
+
+    @action(detail=False, methods=['get'])
+    def locations(self, request):
+        locs = list(
+            Matter.objects.exclude(location='')
+            .values_list('location', flat=True)
+            .distinct()
+            .order_by('location')
+        )
+        return Response(locs)

@@ -124,3 +124,29 @@ class ClientManagementTests(TestCase):
         self.assertIn('phone_number', audit.details.get('changes', {}))
         self.assertEqual(audit.details['changes']['phone_number']['old'], '+254711000111')
         self.assertEqual(audit.details['changes']['phone_number']['new'], '+254799888777')
+
+    def test_client_legacy_reference_and_duplicate_rejection(self):
+        url = reverse('client-list')
+        data = {
+            'client_reference': 'OLD-CLI-1998',
+            'client_type': ClientType.INDIVIDUAL,
+            'first_name': 'Daniel',
+            'last_name': 'Arap',
+            'phone_number': '+254700111222',
+        }
+        resp = self.client.post(url, data, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.data['client_reference'], 'OLD-CLI-1998')
+
+        # Duplicate reference must be refused
+        data2 = {
+            'client_reference': 'OLD-CLI-1998',
+            'client_type': ClientType.INDIVIDUAL,
+            'first_name': 'Another',
+            'last_name': 'Person',
+            'phone_number': '+254700333444',
+        }
+        dup_resp = self.client.post(url, data2, format='json')
+        self.assertEqual(dup_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('client_reference', dup_resp.data)
+        self.assertIn('already exists', str(dup_resp.data['client_reference']))

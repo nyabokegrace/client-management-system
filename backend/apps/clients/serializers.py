@@ -4,6 +4,7 @@ from apps.accounts.serializers import UserSerializer
 
 
 class ClientSerializer(serializers.ModelSerializer):
+    client_reference = serializers.CharField(required=False, allow_blank=True)
     display_name = serializers.ReadOnlyField()
     assigned_advocate_details = UserSerializer(source='assigned_advocate', read_only=True)
     created_by_name = serializers.ReadOnlyField(source='created_by.full_name')
@@ -37,7 +38,18 @@ class ClientSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'client_reference', 'created_by', 'created_at', 'updated_at', 'display_name']
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at', 'display_name']
+
+    def validate_client_reference(self, value):
+        if value:
+            cleaned = value.strip()
+            qs = Client.objects.filter(client_reference__iexact=cleaned)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(f"A client with reference '{cleaned}' already exists.")
+            return cleaned
+        return value
 
     def get_matters_count(self, obj):
         return getattr(obj, 'matters', None).count() if hasattr(obj, 'matters') else 0

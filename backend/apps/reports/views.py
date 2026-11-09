@@ -310,20 +310,35 @@ class ExportReportPDFView(APIView):
             return self._build_pdf('Tasks Report', headers, rows, 'tasks_report.pdf', use_landscape=False, inline=inline)
 
         else:  # default: matters
-            headers = ['Matter Reference', 'Title', 'Client', 'Type', 'Status', 'Priority', 'Advocate', 'Court', 'Case Number', 'Date Opened']
+            headers = [
+                'Matter Reference',
+                'Title',
+                'Client',
+                'Location',
+                'Type',
+                'Status',
+                'Priority',
+                'Advocate',
+                'Opposing Counsel',
+                'Court',
+                'Case Number',
+                'Date Opened',
+            ]
             rows = [
                 [
                     m.matter_reference,
                     m.title,
                     m.client.display_name if m.client else 'N/A',
+                    m.location or 'N/A',
                     m.get_matter_type_display(),
                     m.get_status_display(),
                     m.get_priority_display(),
                     m.assigned_advocate.full_name if m.assigned_advocate else 'Unassigned',
+                    m.opposing_contact.name if m.opposing_contact else (m.opposing_advocate or 'N/A'),
                     m.court,
                     m.case_number,
                     m.date_opened.strftime('%Y-%m-%d') if m.date_opened else 'N/A',
                 ]
-                for m in Matter.objects.select_related('client', 'assigned_advocate').all().order_by('-created_at')
+                for m in Matter.objects.select_related('client', 'assigned_advocate', 'opposing_contact').all().order_by('-created_at')
             ]
             return self._build_pdf('Matters Report', headers, rows, 'matters_report.pdf', use_landscape=True, inline=inline)

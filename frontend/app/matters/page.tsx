@@ -8,22 +8,38 @@ import {
   Filter,
   Pencil,
   Trash2,
+  MapPin,
+  UserCheck,
+  RefreshCw,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
-import { Matter, Client, MatterPriority, MatterStatus } from '../../types';
+import { Matter, Client, Contact, ContactType, MatterPriority, MatterStatus } from '../../types';
 
 export default function MattersPage() {
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [existingLocations, setExistingLocations] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Quick contact inline creation
+  const [isQuickContactOpen, setIsQuickContactOpen] = useState(false);
+  const [quickSubmitting, setQuickSubmitting] = useState(false);
+  const [quickContact, setQuickContact] = useState({
+    name: '',
+    contact_type: 'advocate' as ContactType,
+    firm_name: '',
+    phone: '',
+    email: '',
+  });
 
   // Edit & Delete state
   const [editingMatter, setEditingMatter] = useState<Matter | null>(null);
@@ -41,8 +57,10 @@ export default function MattersPage() {
 
   // Form state
   const [formData, setFormData] = useState({
+    matter_reference: '',
     title: '',
     client: 0,
+    location: '',
     matter_type: 'litigation',
     priority: 'normal' as MatterPriority,
     status: 'new' as MatterStatus,
@@ -50,6 +68,9 @@ export default function MattersPage() {
     case_number: '',
     opposing_party: '',
     opposing_advocate: '',
+    opposing_contact: 0,
+    date_opened: '',
+    date_closed: '',
     description: '',
     internal_notes: '',
   });
@@ -61,13 +82,17 @@ export default function MattersPage() {
       if (searchTerm) params.search = searchTerm;
       if (statusFilter !== 'all') params.status = statusFilter;
 
-      const [mattersRes, clientsRes] = await Promise.all([
+      const [mattersRes, clientsRes, contactsRes, locsRes] = await Promise.all([
         api.matters.list(params),
         api.clients.list({ status: 'active' }),
+        api.contacts.list(),
+        api.matters.locations(),
       ]);
 
       setMatters(Array.isArray(mattersRes) ? mattersRes : mattersRes.results || []);
       setClients(Array.isArray(clientsRes) ? clientsRes : clientsRes.results || []);
+      setContacts(Array.isArray(contactsRes) ? contactsRes : contactsRes.results || []);
+      if (Array.isArray(locsRes)) setExistingLocations(locsRes);
     } catch {
       // ignore
     } finally {
@@ -84,11 +109,14 @@ export default function MattersPage() {
     fetchData();
   };
 
-  const openCreateModal = () => {
+  const openCreateModal = async () => {
     setEditingMatter(null);
+    const today = new Date().toISOString().slice(0, 10);
     setFormData({
+      matter_reference: '',
       title: '',
       client: 0,
+      location: '',
       matter_type: 'litigation',
       priority: 'normal',
       status: 'new',
@@ -96,17 +124,45 @@ export default function MattersPage() {
       case_number: '',
       opposing_party: '',
       opposing_advocate: '',
+      opposing_contact: 0,
+      date_opened: today,
+      date_closed: '',
       description: '',
       internal_notes: '',
     });
     setIsModalOpen(true);
+    try {
+      const sug = await api.matters.suggestReference({ date_opened: today });
+      if (sug?.suggested_reference) {
+        setFormData((prev) => ({ ...prev, matter_reference: sug.suggested_reference }));
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleRefreshSuggestedReference = async () => {
+    try {
+      const sug = await api.matters.suggestReference({
+        location: formData.location,
+        date_opened: formData.date_opened,
+        matter_type: formData.matter_type,
+      });
+      if (sug?.suggested_reference) {
+        setFormData((prev) => ({ ...prev, matter_reference: sug.suggested_reference }));
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const openEditModal = (matter: Matter) => {
     setEditingMatter(matter);
     setFormData({
+      matter_reference: matter.matter_reference,
       title: matter.title,
       client: matter.client,
+      location: matter.location || '',
       matter_type: matter.matter_type,
       priority: matter.priority,
       status: matter.status,
@@ -114,6 +170,9 @@ export default function MattersPage() {
       case_number: matter.case_number || '',
       opposing_party: matter.opposing_party || '',
       opposing_advocate: matter.opposing_advocate || '',
+      opposing_contact: matter.opposing_contact || 0,
+      date_opened: matter.date_opened || '',
+      date_closed: matter.date_closed || '',
       description: matter.description || '',
       internal_notes: matter.internal_notes || '',
     });
@@ -140,6 +199,26 @@ export default function MattersPage() {
     }
   };
 
+  const handleQuickCreateContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickContact.name.trim()) {
+      alert('Please enter a name for the contact.');
+      return;
+    }
+    try {
+      setQuickSubmitting(true);
+      const created = await api.contacts.create(quickContact);
+      setContacts((prev) => [created, ...prev]);
+      setFormData((prev) => ({ ...prev, opposing_contact: created.id }));
+      setIsQuickContactOpen(false);
+      setQuickContact({ name: '', contact_type: 'advocate', firm_name: '', phone: '', email: '' });
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to create contact.');
+    } finally {
+      setQuickSubmitting(false);
+    }
+  };
+
   const handleSaveMatter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.client) {
@@ -149,10 +228,16 @@ export default function MattersPage() {
 
     try {
       setSubmitting(true);
+      const payload = {
+        ...formData,
+        opposing_contact: formData.opposing_contact ? formData.opposing_contact : null,
+        date_closed: formData.date_closed || null,
+      };
+
       if (editingMatter) {
-        await api.matters.update(editingMatter.id, formData);
+        await api.matters.update(editingMatter.id, payload);
       } else {
-        await api.matters.create(formData);
+        await api.matters.create(payload);
       }
       setIsModalOpen(false);
       setEditingMatter(null);
@@ -237,9 +322,10 @@ export default function MattersPage() {
             <table className="w-full text-left text-xs">
               <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="px-5 py-3">Reference</th>
+                  <th className="px-5 py-3">Reference & Location</th>
                   <th className="px-5 py-3">Matter Title & Forum</th>
                   <th className="px-5 py-3">Client</th>
+                  <th className="px-5 py-3">Opposing Counsel</th>
                   <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Priority</th>
                   <th className="px-5 py-3">Status</th>
@@ -249,13 +335,13 @@ export default function MattersPage() {
               <tbody className="divide-y divide-[#E5E7EB]">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-gray-500">
+                    <td colSpan={8} className="px-5 py-8 text-center text-gray-500">
                       Loading legal matters...
                     </td>
                   </tr>
                 ) : matters.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-gray-500">
+                    <td colSpan={8} className="px-5 py-12 text-center text-gray-500">
                       <Briefcase className="w-8 h-8 mx-auto text-gray-300 mb-2" />
                       <p className="font-medium text-gray-700">No legal matter files found.</p>
                       <p className="text-[11px] text-gray-400 mt-1">Open a new matter file for an existing client.</p>
@@ -264,8 +350,16 @@ export default function MattersPage() {
                 ) : (
                   matters.map((matter) => (
                     <tr key={matter.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3.5 font-mono font-medium text-black">
-                        {matter.matter_reference}
+                      <td className="px-5 py-3.5">
+                        <span className="font-mono font-semibold text-black block">
+                          {matter.matter_reference}
+                        </span>
+                        {matter.location && (
+                          <span className="text-[11px] text-gray-500 inline-flex items-center mt-0.5">
+                            <MapPin className="w-3 h-3 mr-0.5 text-gray-400" />
+                            {matter.location}
+                          </span>
+                        )}
                       </td>
                       <td className="px-5 py-3.5">
                         <div className="font-semibold text-gray-900">{matter.title}</div>
@@ -275,6 +369,23 @@ export default function MattersPage() {
                       </td>
                       <td className="px-5 py-3.5 font-medium text-gray-800">
                         {matter.client_name}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {matter.opposing_contact_name ? (
+                          <div className="flex items-center space-x-1 text-gray-800 font-medium">
+                            <UserCheck className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                            <span>{matter.opposing_contact_name}</span>
+                          </div>
+                        ) : matter.opposing_advocate ? (
+                          <span className="text-gray-700">{matter.opposing_advocate}</span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                        {matter.opposing_party && (
+                          <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[140px]">
+                            vs {matter.opposing_party}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3.5 text-gray-600">
                         {matter.matter_type_display || matter.matter_type}
@@ -349,6 +460,52 @@ export default function MattersPage() {
         maxWidth="xl"
       >
         <form onSubmit={handleSaveMatter} className="space-y-4 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2">
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Matter Reference * (Auto-suggested or Custom)
+              </label>
+              <div className="flex space-x-1.5">
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. SP/Nairobi/CIV/14/2026 or legacy reference"
+                  value={formData.matter_reference}
+                  onChange={(e) => setFormData({ ...formData, matter_reference: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded font-mono focus:outline-none focus:border-black"
+                />
+                <button
+                  type="button"
+                  onClick={handleRefreshSuggestedReference}
+                  title="Recompute suggested reference using location and date"
+                  className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 border border-[#E5E7EB] rounded text-gray-700 text-xs font-medium inline-flex items-center flex-shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                  Suggest
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Location / Town
+              </label>
+              <input
+                type="text"
+                list="locations-list"
+                placeholder="e.g. Nairobi, Kisumu"
+                value={formData.location}
+                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+              <datalist id="locations-list">
+                {existingLocations.map((loc) => (
+                  <option key={loc} value={loc} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Primary Client *
@@ -380,6 +537,31 @@ export default function MattersPage() {
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
             />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Date Opened
+              </label>
+              <input
+                type="date"
+                value={formData.date_opened}
+                onChange={(e) => setFormData({ ...formData, date_opened: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Date Closed (Optional)
+              </label>
+              <input
+                type="date"
+                value={formData.date_closed}
+                onChange={(e) => setFormData({ ...formData, date_closed: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -476,18 +658,47 @@ export default function MattersPage() {
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               />
             </div>
+
             <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Opposing Advocate / Law Firm
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Bowmans Kenya"
-                value={formData.opposing_advocate}
-                onChange={(e) => setFormData({ ...formData, opposing_advocate: e.target.value })}
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-gray-700">
+                  Opposing Representative (Contact Directory)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsQuickContactOpen(true)}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center"
+                >
+                  <Plus className="w-3 h-3 mr-0.5" />
+                  Add new contact
+                </button>
+              </div>
+              <select
+                value={formData.opposing_contact}
+                onChange={(e) => setFormData({ ...formData, opposing_contact: Number(e.target.value) })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              />
+              >
+                <option value={0}>— None / Unlinked Contact —</option>
+                {contacts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.firm_name ? `(${c.firm_name})` : `[${c.contact_type_display || c.contact_type}]`}
+                  </option>
+                ))}
+              </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+              Free-text Opposing Advocate (Alternate or External Details)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Bowmans Kenya"
+              value={formData.opposing_advocate}
+              onChange={(e) => setFormData({ ...formData, opposing_advocate: e.target.value })}
+              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+            />
           </div>
 
           <div>
@@ -519,6 +730,101 @@ export default function MattersPage() {
               className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
             >
               {submitting ? 'Saving...' : editingMatter ? 'Save Changes' : 'Open Matter File'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Quick Add Contact Modal */}
+      <Modal
+        isOpen={isQuickContactOpen}
+        onClose={() => setIsQuickContactOpen(false)}
+        title="Add New Contact"
+        description="Quickly register opposing counsel or an external contact without leaving the matter form."
+        maxWidth="md"
+      >
+        <form onSubmit={handleQuickCreateContact} className="space-y-3 text-xs">
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+              Contact Name *
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. James Mwangi, Advocate"
+              value={quickContact.name}
+              onChange={(e) => setQuickContact({ ...quickContact, name: e.target.value })}
+              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Type
+              </label>
+              <select
+                value={quickContact.contact_type}
+                onChange={(e) => setQuickContact({ ...quickContact, contact_type: e.target.value as ContactType })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              >
+                <option value="advocate">Advocate</option>
+                <option value="law_firm">Law Firm</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Firm Name
+              </label>
+              <input
+                type="text"
+                placeholder="Law Firm Name"
+                value={quickContact.firm_name}
+                onChange={(e) => setQuickContact({ ...quickContact, firm_name: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Phone
+              </label>
+              <input
+                type="text"
+                placeholder="+254..."
+                value={quickContact.phone}
+                onChange={(e) => setQuickContact({ ...quickContact, phone: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Email
+              </label>
+              <input
+                type="email"
+                placeholder="counsel@..."
+                value={quickContact.email}
+                onChange={(e) => setQuickContact({ ...quickContact, email: e.target.value })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              />
+            </div>
+          </div>
+          <div className="pt-3 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
+            <button
+              type="button"
+              onClick={() => setIsQuickContactOpen(false)}
+              className="px-3 py-1.5 border border-[#E5E7EB] rounded text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={quickSubmitting}
+              className="px-3.5 py-1.5 bg-[#111111] text-white rounded font-medium hover:bg-black disabled:opacity-50"
+            >
+              {quickSubmitting ? 'Adding...' : 'Add & Select'}
             </button>
           </div>
         </form>

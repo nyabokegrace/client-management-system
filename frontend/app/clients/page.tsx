@@ -47,6 +47,7 @@ export default function ClientsPage() {
 
   // Form state
   const [formData, setFormData] = useState({
+    client_reference: '',
     client_type: 'individual' as ClientType,
     first_name: '',
     last_name: '',
@@ -84,9 +85,10 @@ export default function ClientsPage() {
     fetchClients();
   };
 
-  const openCreateModal = () => {
+  const openCreateModal = async () => {
     setEditingClient(null);
     setFormData({
+      client_reference: '',
       client_type: 'individual',
       first_name: '',
       last_name: '',
@@ -100,11 +102,20 @@ export default function ClientsPage() {
       internal_notes: '',
     });
     setIsModalOpen(true);
+    try {
+      const sug = await api.clients.suggestReference();
+      if (sug?.suggested_reference) {
+        setFormData((prev) => ({ ...prev, client_reference: sug.suggested_reference }));
+      }
+    } catch {
+      // fallback
+    }
   };
 
   const openEditModal = (client: Client) => {
     setEditingClient(client);
     setFormData({
+      client_reference: client.client_reference,
       client_type: client.client_type,
       first_name: client.first_name || '',
       last_name: client.last_name || '',
@@ -368,6 +379,19 @@ export default function ClientsPage() {
         maxWidth="xl"
       >
         <form onSubmit={handleSaveClient} className="space-y-4 text-xs">
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+              Client Reference (Auto-suggested or Custom Legacy Code)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. CLI-2026-0001 or legacy file number"
+              value={formData.client_reference}
+              onChange={(e) => setFormData({ ...formData, client_reference: e.target.value })}
+              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded font-mono focus:outline-none focus:border-black"
+            />
+          </div>
+
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Client Classification *

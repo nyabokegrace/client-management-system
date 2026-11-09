@@ -1,3 +1,4 @@
+from datetime import date
 from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
@@ -78,10 +79,24 @@ class Matter(models.Model):
     )
 
     # Court & external details
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Town or location, e.g. Nairobi, Kisumu"
+    )
     court = models.CharField(max_length=200, blank=True, help_text="e.g. High Court at Milimani Commercial Division")
     case_number = models.CharField(max_length=100, blank=True, help_text="Official court case registration number")
     opposing_party = models.CharField(max_length=255, blank=True)
-    opposing_advocate = models.CharField(max_length=255, blank=True)
+    opposing_advocate = models.CharField(max_length=255, blank=True, help_text="Free-text opposing advocate name")
+    opposing_contact = models.ForeignKey(
+        'contacts.Contact',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='matters',
+        help_text="Opposing party's legal representative contact record"
+    )
 
     date_opened = models.DateField(default=timezone.localdate)
     date_closed = models.DateField(null=True, blank=True)
@@ -106,24 +121,52 @@ class Matter(models.Model):
             models.Index(fields=['client']),
             models.Index(fields=['assigned_advocate']),
             models.Index(fields=['case_number']),
+            models.Index(fields=['location']),
         ]
 
     def save(self, *args, **kwargs):
         if not self.matter_reference:
             with transaction.atomic():
-                year = timezone.now().year
-                prefix = f"SWL-{year}-"
-                last_matter = Matter.objects.filter(matter_reference__startswith=prefix).order_by('-id').first()
-                if last_matter and last_matter.matter_reference:
-                    try:
-                        last_seq = int(last_matter.matter_reference.split('-')[-1])
-                        seq = last_seq + 1
-                    except (ValueError, IndexError):
-                        seq = 1
-                else:
-                    seq = 1
-                self.matter_reference = f"{prefix}{seq:04d}"
+                self.matter_reference = generate_suggested_matter_reference(
+                    location=self.location,
+                    date_opened=self.date_opened,
+                    matter_type=''
+                )
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.matter_reference}: {self.title}"
+
+
+def get_next_matter_file_number():
+    max_num = 0
+    for ref in Matter.objects.exclude(matter_reference='').values_list('matter_reference', flat=True):
+        parts = ref.split('/')
+        if len(parts) >= 4:
+            try:
+                num = int(parts[3].strip())
+                if num > max_num:
+                    max_num = num
+            except (ValueError, TypeError):
+                continue
+    return max_num + 1
+
+
+def generate_suggested_matter_reference(location='', date_opened=None, matter_type=''):
+    next_file_num = get_next_matter_file_number()
+    if date_opened:
+        if isinstance(date_opened, str):
+            try:
+                year = date.fromisoformat(date_opened).year
+            except (ValueError, TypeError):
+                year = timezone.localdate().year
+        elif hasattr(date_opened, 'year'):
+            year = date_opened.year
+        else:
+            year = timezone.localdate().year
+    else:
+        year = timezone.localdate().year
+
+    loc_str = location.strip() if location else ''
+    type_str = matter_type.strip() if matter_type else ''
+    return f"SP/{loc_str}/{type_str}/{next_file_num}/{year}"
