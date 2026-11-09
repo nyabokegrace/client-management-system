@@ -6,17 +6,15 @@ import {
   Plus,
   Search,
   Filter,
-  Building,
-  User as UserIcon,
-  ChevronDown,
-  Scale,
-  Calendar,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
-import { Matter, Client, User, MatterStatus, MatterPriority } from '../../types';
+import { Matter, Client, MatterPriority, MatterStatus } from '../../types';
 
 export default function MattersPage() {
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -26,6 +24,20 @@ export default function MattersPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Edit & Delete state
+  const [editingMatter, setEditingMatter] = useState<Matter | null>(null);
+  const [deletingMatter, setDeletingMatter] = useState<Matter | null>(null);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [deleteSummary, setDeleteSummary] = useState<{
+    name: string;
+    reference: string;
+    hearings_count: number;
+    tasks_count: number;
+    case_updates_count: number;
+    documents_count: number;
+    message: string;
+  } | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -72,7 +84,63 @@ export default function MattersPage() {
     fetchData();
   };
 
-  const handleCreateMatter = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingMatter(null);
+    setFormData({
+      title: '',
+      client: 0,
+      matter_type: 'litigation',
+      priority: 'normal',
+      status: 'new',
+      court: '',
+      case_number: '',
+      opposing_party: '',
+      opposing_advocate: '',
+      description: '',
+      internal_notes: '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (matter: Matter) => {
+    setEditingMatter(matter);
+    setFormData({
+      title: matter.title,
+      client: matter.client,
+      matter_type: matter.matter_type,
+      priority: matter.priority,
+      status: matter.status,
+      court: matter.court || '',
+      case_number: matter.case_number || '',
+      opposing_party: matter.opposing_party || '',
+      opposing_advocate: matter.opposing_advocate || '',
+      description: matter.description || '',
+      internal_notes: matter.internal_notes || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openDeleteModal = async (matter: Matter) => {
+    setDeletingMatter(matter);
+    setDeleteSummary(null);
+    setIsDeleteOpen(true);
+    try {
+      const summary = await api.matters.deleteSummary(matter.id);
+      setDeleteSummary(summary);
+    } catch {
+      setDeleteSummary({
+        name: matter.title,
+        reference: matter.matter_reference,
+        hearings_count: 0,
+        tasks_count: 0,
+        case_updates_count: 0,
+        documents_count: 0,
+        message: `Are you sure you want to delete matter ${matter.matter_reference}?`,
+      });
+    }
+  };
+
+  const handleSaveMatter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.client) {
       alert('Please select a primary client for this matter.');
@@ -81,27 +149,26 @@ export default function MattersPage() {
 
     try {
       setSubmitting(true);
-      await api.matters.create(formData);
+      if (editingMatter) {
+        await api.matters.update(editingMatter.id, formData);
+      } else {
+        await api.matters.create(formData);
+      }
       setIsModalOpen(false);
-      setFormData({
-        title: '',
-        client: 0,
-        matter_type: 'litigation',
-        priority: 'normal',
-        status: 'new',
-        court: '',
-        case_number: '',
-        opposing_party: '',
-        opposing_advocate: '',
-        description: '',
-        internal_notes: '',
-      });
+      setEditingMatter(null);
       fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to create legal matter');
+      alert(err instanceof Error ? err.message : 'Failed to save legal matter');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleDeleteMatter = async () => {
+    if (!deletingMatter) return;
+    await api.matters.delete(deletingMatter.id);
+    setDeletingMatter(null);
+    fetchData();
   };
 
   const handleChangeStatus = async (id: number, newStatus: string) => {
@@ -117,11 +184,11 @@ export default function MattersPage() {
     <div className="flex-1 flex flex-col pb-12">
       <Header
         title="Matters & Legal Files"
-        subtitle="Central case directory, court pleadings, briefs, assignments and dispute workspaces"
+        subtitle="Central case directory, court pleadings, briefs, dispute workspaces and active client files"
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Matters' }]}
         actions={
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openCreateModal}
             className="inline-flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors"
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" />
@@ -131,13 +198,13 @@ export default function MattersPage() {
       />
 
       <div className="px-6 py-6 space-y-4">
-        {/* Search and Filters */}
-        <div className="bg-white border border-[#E5E7EB] p-4 rounded flex flex-col sm:flex-row items-center justify-between gap-3">
+        {/* Search & Status Filters */}
+        <div className="bg-white border border-[#E5E7EB] p-4 rounded flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
           <form onSubmit={handleSearch} className="relative flex-1 w-full">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Search by matter reference (SWL-...), title, case number, or client..."
+              placeholder="Search by matter reference, title, case number, or client..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
@@ -165,7 +232,7 @@ export default function MattersPage() {
         </div>
 
         {/* Matters Table */}
-        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
+        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
@@ -176,18 +243,19 @@ export default function MattersPage() {
                   <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Priority</th>
                   <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E5E7EB]">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
+                    <td colSpan={7} className="px-5 py-8 text-center text-gray-500">
                       Loading legal matters...
                     </td>
                   </tr>
                 ) : matters.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center text-gray-500">
+                    <td colSpan={7} className="px-5 py-12 text-center text-gray-500">
                       <Briefcase className="w-8 h-8 mx-auto text-gray-300 mb-2" />
                       <p className="font-medium text-gray-700">No legal matter files found.</p>
                       <p className="text-[11px] text-gray-400 mt-1">Open a new matter file for an existing client.</p>
@@ -240,6 +308,22 @@ export default function MattersPage() {
                           <option value="archived">Archived</option>
                         </select>
                       </td>
+                      <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
+                        <button
+                          onClick={() => openEditModal(matter)}
+                          title="Edit matter"
+                          className="p-1.5 text-gray-400 hover:text-black rounded hover:bg-gray-100 transition-colors inline-flex items-center"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(matter)}
+                          title="Delete matter"
+                          className="p-1.5 text-gray-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors inline-flex items-center"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -249,15 +333,22 @@ export default function MattersPage() {
         </div>
       </div>
 
-      {/* Open Legal Matter Modal */}
+      {/* Open/Edit Legal Matter Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Open New Legal Matter"
-        description="Initiate a legal engagement, litigation brief, or advisory file with an auto-generated unique matter reference."
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingMatter(null);
+        }}
+        title={editingMatter ? `Edit Matter: ${editingMatter.matter_reference}` : 'Open New Legal Matter'}
+        description={
+          editingMatter
+            ? `Update case details, forum, or client instructions for ${editingMatter.title}.`
+            : 'Initiate a legal engagement, litigation brief, or advisory file with an auto-generated unique matter reference.'
+        }
         maxWidth="xl"
       >
-        <form onSubmit={handleCreateMatter} className="space-y-4 text-xs">
+        <form onSubmit={handleSaveMatter} className="space-y-4 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Primary Client *
@@ -268,10 +359,10 @@ export default function MattersPage() {
               onChange={(e) => setFormData({ ...formData, client: Number(e.target.value) })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
             >
-              <option value={0}>— Select Client —</option>
+              <option value={0}>— Select Associated Client —</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.client_reference} - {c.display_name}
+                  {c.display_name} ({c.client_reference})
                 </option>
               ))}
             </select>
@@ -279,19 +370,19 @@ export default function MattersPage() {
 
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Matter Title *
+              Matter Title / Subject *
             </label>
             <input
               type="text"
               required
-              placeholder="e.g. Siwolo v. National Bank of Kenya or Conveyance of LR No. 209/..."
+              placeholder="e.g. Injunction Application or Conveyance of LR No..."
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
                 Matter Type
@@ -301,19 +392,20 @@ export default function MattersPage() {
                 onChange={(e) => setFormData({ ...formData, matter_type: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               >
-                <option value="litigation">Civil / Criminal Litigation</option>
-                <option value="commercial">Commercial & Corporate Law</option>
-                <option value="conveyancing">Conveyancing & Real Estate</option>
-                <option value="family">Family & Succession Law</option>
-                <option value="employment">Labor & Employment</option>
+                <option value="litigation">Litigation & Disputes</option>
+                <option value="commercial">Commercial & Corporate</option>
+                <option value="conveyancing">Conveyancing & Land</option>
+                <option value="family">Family & Probate</option>
+                <option value="employment">Employment & Labor</option>
                 <option value="arbitration">Arbitration & ADR</option>
                 <option value="ip">Intellectual Property</option>
-                <option value="general">General Advisory & Practice</option>
+                <option value="general">General Advisory</option>
               </select>
             </div>
+
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Priority
+                Priority Level
               </label>
               <select
                 value={formData.priority}
@@ -324,6 +416,22 @@ export default function MattersPage() {
                 <option value="normal">Normal</option>
                 <option value="high">High</option>
                 <option value="urgent">Urgent</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Initial Status
+              </label>
+              <select
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as MatterStatus })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              >
+                <option value="new">New</option>
+                <option value="active">Active</option>
+                <option value="pending">Pending</option>
+                <option value="awaiting_court">Awaiting Court</option>
               </select>
             </div>
           </div>
@@ -397,7 +505,10 @@ export default function MattersPage() {
           <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
             <button
               type="button"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingMatter(null);
+              }}
               className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
             >
               Cancel
@@ -405,13 +516,37 @@ export default function MattersPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
+              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
             >
-              {submitting ? 'Creating Matter...' : 'Open Matter File'}
+              {submitting ? 'Saving...' : editingMatter ? 'Save Changes' : 'Open Matter File'}
             </button>
           </div>
         </form>
       </Modal>
+
+      {/* Delete Confirmation Modal */}
+      {deletingMatter && (
+        <DeleteConfirmModal
+          isOpen={isDeleteOpen}
+          onClose={() => {
+            setIsDeleteOpen(false);
+            setDeletingMatter(null);
+            setDeleteSummary(null);
+          }}
+          onConfirm={handleDeleteMatter}
+          title="Delete Legal Matter File"
+          recordName={deletingMatter.title}
+          recordReference={deletingMatter.matter_reference}
+          requireReferenceMatch={true}
+          message={
+            deleteSummary ? (
+              <p>{deleteSummary.message}</p>
+            ) : (
+              <p>Computing related hearings, tasks, and updates...</p>
+            )
+          }
+        />
+      )}
     </div>
   );
 }

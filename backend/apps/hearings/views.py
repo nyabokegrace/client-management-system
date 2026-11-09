@@ -8,8 +8,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Hearing, HearingStatus
 from .serializers import HearingSerializer
-from apps.audit.models import log_activity, AuditAction, AuditModule
-from apps.accounts.permissions import IsInternalStaff
+from apps.audit.models import AuditAction, AuditModule, log_activity
+from apps.audit.utils import record_create_audit, record_update_audit, record_delete_audit
+from apps.accounts.permissions import IsAdministrator, IsInternalStaff
 
 
 class HearingViewSet(viewsets.ModelViewSet):
@@ -36,26 +37,34 @@ class HearingViewSet(viewsets.ModelViewSet):
     ordering_fields = ['hearing_date', 'created_at']
     ordering = ['hearing_date']
 
+    def get_permissions(self):
+        if self.action in ['destroy']:
+            return [IsAdministrator()]
+        return [IsAuthenticated(), IsInternalStaff()]
+
     def perform_create(self, serializer):
         hearing = serializer.save(created_by=self.request.user)
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.CREATE,
-            module=AuditModule.HEARING,
-            target_id=hearing.id,
-            target_repr=f"Hearing for {hearing.matter.matter_reference} on {hearing.hearing_date:%Y-%m-%d %H:%M}",
-            details={'matter_id': hearing.matter_id, 'type': hearing.hearing_type}
-        )
+        record_create_audit(self.request.user, AuditModule.HEARING, hearing)
 
     def perform_update(self, serializer):
+        old_hearing = Hearing.objects.get(pk=serializer.instance.pk)
         hearing = serializer.save()
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.UPDATE,
-            module=AuditModule.HEARING,
-            target_id=hearing.id,
-            target_repr=f"Hearing for {hearing.matter.matter_reference} on {hearing.hearing_date:%Y-%m-%d %H:%M}"
-        )
+        record_update_audit(self.request.user, AuditModule.HEARING, old_hearing, hearing)
+
+    def perform_destroy(self, instance):
+        record_delete_audit(self.request.user, AuditModule.HEARING, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def delete_summary(self, request, pk=None):
+        hearing = self.get_object()
+        date_str = hearing.hearing_date.strftime('%d %b %Y, %I:%M %p') if hearing.hearing_date else 'Scheduled'
+        ref = hearing.matter.matter_reference if hearing.matter else ''
+        return Response({
+            'name': f"{hearing.get_hearing_type_display()} on {date_str}",
+            'reference': ref,
+            'message': f"Are you sure you want to delete hearing on {date_str} for matter {ref}? This action cannot be undone."
+        })
 
     @action(detail=False, methods=['get'])
     def upcoming(self, request):
@@ -75,7 +84,11 @@ class HearingViewSet(viewsets.ModelViewSet):
         hearing = self.get_object()
         outcome = request.data.get('outcome_summary', '').strip()
         next_date = request.data.get('next_hearing_date')
-        
+
+        old_status = hearing.status
+        old_outcome = hearing.outcome_summary
+        old_next = hearing.next_hearing_date
+
         hearing.outcome_summary = outcome
         hearing.status = HearingStatus.COMPLETED
         if next_date:
@@ -86,8 +99,12 @@ class HearingViewSet(viewsets.ModelViewSet):
             actor=request.user,
             action=AuditAction.UPDATE,
             module=AuditModule.HEARING,
-            target_id=hearing.id,
+            target_id=str(hearing.id),
             target_repr=f"Outcome recorded for hearing {hearing.id} ({hearing.matter.matter_reference})",
-            details={'outcome': outcome[:100]}
+            details={'changes': {
+                'outcome_summary': {'old': old_outcome, 'new': outcome},
+                'status': {'old': old_status, 'new': HearingStatus.COMPLETED},
+                'next_hearing_date': {'old': str(old_next) if old_next else None, 'new': str(next_date) if next_date else None}
+            }}
         )
         return Response(self.get_serializer(hearing).data)

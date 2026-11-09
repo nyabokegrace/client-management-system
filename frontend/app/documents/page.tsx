@@ -11,10 +11,12 @@ import {
   Filter,
   ShieldAlert,
   Paperclip,
+  Pencil,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
 import { Document, Client, Matter } from '../../types';
 
@@ -27,11 +29,20 @@ export default function DocumentsPage() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<Document | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<Document | null>(null);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [deleteSummary, setDeleteSummary] = useState<{
+    name: string;
+    filename: string;
+    reference: string;
+    message: string;
+  } | null>(null);
 
   // Form state
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('general');
-  const [confidentiality, setConfidentiality] = useState('standard');
+  const [confidentiality, setConfidentiality] = useState<'standard' | 'confidential' | 'restricted'>('standard');
   const [clientId, setClientId] = useState<number>(0);
   const [matterId, setMatterId] = useState<number>(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -69,12 +80,62 @@ export default function DocumentsPage() {
     fetchData();
   };
 
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) {
-      alert('Please choose a file to upload.');
-      return;
+  const openUploadModal = () => {
+    setEditingDoc(null);
+    setTitle('');
+    setCategory('general');
+    setConfidentiality('standard');
+    setClientId(0);
+    setMatterId(0);
+    setSelectedFile(null);
+    setDescription('');
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (doc: Document) => {
+    setEditingDoc(doc);
+    setTitle(doc.title);
+    setCategory(doc.category);
+    setConfidentiality(doc.confidentiality);
+    setClientId(doc.client);
+    setMatterId(doc.matter || 0);
+    setSelectedFile(null);
+    setDescription(doc.description || '');
+    setIsModalOpen(true);
+  };
+
+  const openDeleteModal = async (doc: Document) => {
+    setDeletingDoc(doc);
+    setDeleteSummary(null);
+    setIsDeleteOpen(true);
+    try {
+      const summary = await api.documents.deleteSummary(doc.id);
+      setDeleteSummary(summary);
+    } catch {
+      setDeleteSummary({
+        name: doc.title,
+        filename: doc.original_filename,
+        reference: doc.matter_reference || doc.client_name || '',
+        message: `Deleting '${doc.title}' permanently removes the file (${doc.original_filename}) from disk. It cannot be recovered.`,
+      });
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingDoc) return;
+    try {
+      await api.documents.delete(deletingDoc.id);
+      setIsDeleteOpen(false);
+      setDeletingDoc(null);
+      setDeleteSummary(null);
+      fetchData();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Error deleting document');
+    }
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!clientId) {
       alert('Please select a client.');
       return;
@@ -82,23 +143,43 @@ export default function DocumentsPage() {
 
     try {
       setSubmitting(true);
-      const formData = new FormData();
-      formData.append('title', title);
-      formData.append('category', category);
-      formData.append('confidentiality', confidentiality);
-      formData.append('client', String(clientId));
-      if (matterId) formData.append('matter', String(matterId));
-      formData.append('file', selectedFile);
-      if (description) formData.append('description', description);
+      if (editingDoc) {
+        // Editing document metadata
+        await api.documents.update(editingDoc.id, {
+          title,
+          category,
+          confidentiality,
+          client: clientId,
+          matter: matterId || null,
+          description,
+        });
+      } else {
+        // New document upload
+        if (!selectedFile) {
+          alert('Please choose a file to upload.');
+          setSubmitting(false);
+          return;
+        }
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('category', category);
+        formData.append('confidentiality', confidentiality);
+        formData.append('client', String(clientId));
+        if (matterId) formData.append('matter', String(matterId));
+        formData.append('file', selectedFile);
+        if (description) formData.append('description', description);
 
-      await api.documents.upload(formData);
+        await api.documents.upload(formData);
+      }
+
       setIsModalOpen(false);
+      setEditingDoc(null);
       setTitle('');
       setSelectedFile(null);
       setDescription('');
       fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Document upload failed.');
+      alert(err instanceof Error ? err.message : 'Document operation failed.');
     } finally {
       setSubmitting(false);
     }
@@ -133,17 +214,6 @@ export default function DocumentsPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (confirm('Permanently delete this confidential document from private storage? This action cannot be undone.')) {
-      try {
-        await api.documents.delete(id);
-        fetchData();
-      } catch (err: unknown) {
-        alert(err instanceof Error ? err.message : 'Error deleting document');
-      }
-    }
-  };
-
   return (
     <div className="flex-1 flex flex-col pb-12">
       <Header
@@ -152,7 +222,7 @@ export default function DocumentsPage() {
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Documents' }]}
         actions={
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openUploadModal}
             className="inline-flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors"
           >
             <Upload className="w-3.5 h-3.5 mr-1.5" />
@@ -270,18 +340,25 @@ export default function DocumentsPage() {
                       <td className="px-5 py-3.5 text-gray-500 text-[11px]">
                         {new Date(doc.created_at).toLocaleDateString()}
                       </td>
-                      <td className="px-5 py-3.5 text-right space-x-1">
+                      <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
                         <button
                           onClick={() => handleDownload(doc)}
                           title="Download Document"
-                          className="p-1.5 text-gray-600 hover:text-black rounded hover:bg-gray-100 transition-colors"
+                          className="p-1.5 text-gray-600 hover:text-black rounded hover:bg-gray-100 transition-colors inline-flex items-center"
                         >
                           <Download className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(doc.id)}
+                          onClick={() => openEditModal(doc)}
+                          title="Edit Document"
+                          className="p-1.5 text-gray-400 hover:text-black rounded hover:bg-gray-100 transition-colors inline-flex items-center"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(doc)}
                           title="Delete Document"
-                          className="p-1.5 text-gray-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                          className="p-1.5 text-gray-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors inline-flex items-center"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -295,15 +372,22 @@ export default function DocumentsPage() {
         </div>
       </div>
 
-      {/* Upload Document Modal */}
+      {/* Upload/Edit Document Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Upload Legal Document"
-        description="Attach confidential documents to a client or matter. Files are stored securely on private disk and accessed exclusively via authorized endpoints."
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingDoc(null);
+        }}
+        title={editingDoc ? `Edit Document: ${editingDoc.title}` : 'Upload Legal Document'}
+        description={
+          editingDoc
+            ? 'Update document title, category, confidentiality, filing notes, and linked client/matter.'
+            : 'Attach confidential documents to a client or matter. Files are stored securely on private disk and accessed exclusively via authorized endpoints.'
+        }
         maxWidth="xl"
       >
-        <form onSubmit={handleUpload} className="space-y-4 text-xs">
+        <form onSubmit={handleFormSubmit} className="space-y-4 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Document Title *
@@ -343,7 +427,7 @@ export default function DocumentsPage() {
               </label>
               <select
                 value={confidentiality}
-                onChange={(e) => setConfidentiality(e.target.value)}
+                onChange={(e) => setConfidentiality(e.target.value as 'standard' | 'confidential' | 'restricted')}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               >
                 <option value="standard">Standard Internal</option>
@@ -391,17 +475,25 @@ export default function DocumentsPage() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Select File * (Max 25MB: PDF, DOC, DOCX, TXT, XLS, PNG, JPG, ZIP)
-            </label>
-            <input
-              type="file"
-              required
-              onChange={(e) => setSelectedFile(e.target.files ? e.target.files[0] : null)}
-              className="w-full px-3 py-2 border border-[#E5E7EB] rounded bg-[#F9FAFB] text-xs focus:outline-none focus:border-black"
-            />
-          </div>
+          {editingDoc ? (
+            <div className="bg-[#F9FAFB] border border-[#E5E7EB] p-2.5 rounded text-[11px] text-gray-600">
+              <span className="font-semibold text-gray-800">Attached File: </span>
+              <span className="font-mono">{editingDoc.original_filename}</span> ({editingDoc.file_size_display})
+              <p className="text-gray-400 mt-0.5">Replacing the file is out of scope. Upload a new document if you need to attach a different file.</p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Select File * (Max 25MB: PDF, DOC, DOCX, TXT, XLS, PNG, JPG, ZIP)
+              </label>
+              <input
+                type="file"
+                required
+                onChange={(e) => setSelectedFile(e.target.files ? e.target.files[0] : null)}
+                className="w-full px-3 py-2 border border-[#E5E7EB] rounded bg-[#F9FAFB] text-xs focus:outline-none focus:border-black"
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
@@ -418,7 +510,10 @@ export default function DocumentsPage() {
           <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
             <button
               type="button"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingDoc(null);
+              }}
               className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
             >
               Cancel
@@ -428,11 +523,35 @@ export default function DocumentsPage() {
               disabled={submitting}
               className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
             >
-              {submitting ? 'Uploading...' : 'Upload File'}
+              {submitting ? 'Saving...' : editingDoc ? 'Save Changes' : 'Upload File'}
             </button>
           </div>
         </form>
       </Modal>
+
+      {/* Delete Document Modal */}
+      {deletingDoc && (
+        <DeleteConfirmModal
+          isOpen={isDeleteOpen}
+          onClose={() => {
+            setIsDeleteOpen(false);
+            setDeletingDoc(null);
+            setDeleteSummary(null);
+          }}
+          onConfirm={handleDeleteConfirm}
+          title="Delete Legal Document"
+          recordName={deletingDoc.title}
+          recordReference={deletingDoc.original_filename}
+          requireReferenceMatch={false}
+          message={
+            deleteSummary ? (
+              <p>{deleteSummary.message}</p>
+            ) : (
+              <p>Deleting this document permanently removes the file from disk; it cannot be recovered.</p>
+            )
+          }
+        />
+      )}
     </div>
   );
 }

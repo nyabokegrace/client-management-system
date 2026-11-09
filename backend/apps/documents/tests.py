@@ -38,6 +38,14 @@ class DocumentManagementTests(TestCase):
             phone_number='+254733333333',
             assigned_advocate=self.advocate
         )
+        self.admin = User.objects.create_superuser(
+            username='admin_doc',
+            email='admin_doc@siwoloadvocates.com',
+            password='Password123!',
+            first_name='Peter',
+            last_name='Siwolo',
+            role=UserRole.ADMIN
+        )
         self.matter = Matter.objects.create(
             title='Mary Otieno Succession Cause',
             client=self.client_record,
@@ -95,3 +103,54 @@ class DocumentManagementTests(TestCase):
             download_url = reverse('document-download', kwargs={'pk': doc_id})
             dl_resp = self.client.get(download_url)
             self.assertEqual(dl_resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_document_delete_removes_file_from_disk_and_records_audit(self):
+        with override_settings(PRIVATE_STORAGE_ROOT=self.temp_storage.name):
+            dummy_file = SimpleUploadedFile("deleteme.pdf", b"Some file content to delete", content_type="application/pdf")
+            create_resp = self.client.post(reverse('document-list'), {
+                'title': 'File to Delete',
+                'category': DocumentCategory.GENERAL,
+                'client': self.client_record.id,
+                'file': dummy_file
+            }, format='multipart')
+            self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
+            doc_id = create_resp.data['id']
+            doc = Document.objects.get(pk=doc_id)
+            file_path = Path(self.temp_storage.name) / doc.storage_path
+            self.assertTrue(file_path.exists())
+
+            # Delete as admin
+            self.client.force_authenticate(user=self.admin)
+            del_resp = self.client.delete(reverse('document-detail', kwargs={'pk': doc_id}))
+            self.assertEqual(del_resp.status_code, status.HTTP_204_NO_CONTENT)
+            self.assertFalse(Document.objects.filter(pk=doc_id).exists())
+            self.assertFalse(file_path.exists(), "File on disk must be unlinked/removed.")
+
+            # Audit log
+            audit = AuditLog.objects.filter(action=AuditAction.DELETE, module='DOCUMENT', target_id=str(doc_id)).first()
+            self.assertIsNotNone(audit)
+            self.assertEqual(audit.details.get('name'), 'File to Delete')
+
+    def test_document_update_metadata_and_audit(self):
+        with override_settings(PRIVATE_STORAGE_ROOT=self.temp_storage.name):
+            dummy_file = SimpleUploadedFile("contract.pdf", b"Contract details", content_type="application/pdf")
+            create_resp = self.client.post(reverse('document-list'), {
+                'title': 'Draft Agreement',
+                'category': DocumentCategory.CONTRACTS,
+                'client': self.client_record.id,
+                'file': dummy_file
+            }, format='multipart')
+            doc_id = create_resp.data['id']
+
+            # Update document title and category without file
+            patch_resp = self.client.patch(reverse('document-detail', kwargs={'pk': doc_id}), {
+                'title': 'Final Executed Agreement',
+                'confidentiality': ConfidentialityLevel.HIGHLY_CONFIDENTIAL
+            }, format='json')
+            self.assertEqual(patch_resp.status_code, status.HTTP_200_OK)
+
+            audit = AuditLog.objects.filter(action=AuditAction.UPDATE, module='DOCUMENT', target_id=str(doc_id)).first()
+            self.assertIsNotNone(audit)
+            self.assertIn('title', audit.details.get('changes', {}))
+            self.assertEqual(audit.details['changes']['title']['old'], 'Draft Agreement')
+            self.assertEqual(audit.details['changes']['title']['new'], 'Final Executed Agreement')

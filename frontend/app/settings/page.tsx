@@ -326,7 +326,18 @@ export default function SettingsPage() {
                           {log.actor_name || 'System'}
                         </td>
                         <td className="px-5 py-3">
-                          <Badge variant="default" size="sm">
+                          <Badge
+                            variant={
+                              log.action === 'create'
+                                ? 'success'
+                                : log.action === 'update'
+                                ? 'warning'
+                                : log.action === 'delete'
+                                ? 'danger'
+                                : 'default'
+                            }
+                            size="sm"
+                          >
                             {log.action_display || log.action}
                           </Badge>
                         </td>
@@ -334,7 +345,42 @@ export default function SettingsPage() {
                           {log.module_display || log.module}
                         </td>
                         <td className="px-5 py-3 text-gray-800">
-                          {log.target_repr}
+                          <div className="font-medium text-gray-900">{log.target_repr}</div>
+                          {/* If delete */}
+                          {log.action === 'delete' && log.details ? (
+                            <div className="text-[11px] text-gray-500 mt-0.5">
+                              {log.details.name ? (
+                                <span>Name: <strong className="text-gray-700">{String(log.details.name)}</strong></span>
+                              ) : null}
+                              {log.details.reference ? (
+                                <span className="ml-2 font-mono">Ref: {String(log.details.reference)}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {/* If update with changed fields */}
+                          {log.details?.changes &&
+                          typeof log.details.changes === 'object' &&
+                          Object.keys(log.details.changes).length > 0 ? (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {Object.entries(
+                                log.details.changes as Record<string, { old: unknown; new: unknown }>
+                              ).map(([field, delta]) => (
+                                <span
+                                  key={field}
+                                  className="text-[10px] font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200 text-gray-700 inline-flex items-center"
+                                >
+                                  <strong className="text-gray-900 mr-1">{field}:</strong>
+                                  <span className="text-rose-600 line-through mr-1">
+                                    {delta.old !== null && delta.old !== undefined ? String(delta.old) : 'empty'}
+                                  </span>
+                                  <span className="text-gray-400 mr-1">→</span>
+                                  <span className="text-emerald-700 font-semibold">
+                                    {delta.new !== null && delta.new !== undefined ? String(delta.new) : 'empty'}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))

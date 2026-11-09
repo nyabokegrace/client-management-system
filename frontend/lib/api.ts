@@ -183,6 +183,21 @@ class ApiClient {
         { method: 'POST' }
       );
     },
+    delete: async (id: number) => {
+      return this.request(`/clients/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        reference: string;
+        matters_count: number;
+        documents_count: number;
+        tasks_count: number;
+        can_delete: boolean;
+        blocked_reason?: string;
+        message: string;
+      }>(`/clients/${id}/delete_summary/`);
+    },
   };
 
   // Matters
@@ -209,6 +224,20 @@ class ApiClient {
         method: 'PATCH',
         body: JSON.stringify(data),
       });
+    },
+    delete: async (id: number) => {
+      return this.request(`/matters/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        reference: string;
+        hearings_count: number;
+        tasks_count: number;
+        case_updates_count: number;
+        documents_count: number;
+        message: string;
+      }>(`/matters/${id}/delete_summary/`);
     },
     changeStatus: async (id: number, status: string) => {
       return this.request<{ status: string; matter: Matter }>(
@@ -237,11 +266,25 @@ class ApiClient {
         body: formData,
       });
     },
+    update: async (id: number, data: Partial<Document>) => {
+      return this.request<Document>(`/documents/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
     downloadUrl: (id: number) => {
       return `${API_BASE_URL}/documents/${id}/download/`;
     },
     delete: async (id: number) => {
       return this.request(`/documents/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        filename: string;
+        reference: string;
+        message: string;
+      }>(`/documents/${id}/delete_summary/`);
     },
   };
 
@@ -260,6 +303,22 @@ class ApiClient {
         method: 'POST',
         body: JSON.stringify(data),
       });
+    },
+    update: async (id: number, data: Partial<CaseUpdate>) => {
+      return this.request<CaseUpdate>(`/case-updates/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+    delete: async (id: number) => {
+      return this.request(`/case-updates/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        reference: string;
+        message: string;
+      }>(`/case-updates/${id}/delete_summary/`);
     },
   };
 
@@ -281,6 +340,22 @@ class ApiClient {
         method: 'POST',
         body: JSON.stringify(data),
       });
+    },
+    update: async (id: number, data: Partial<Hearing>) => {
+      return this.request<Hearing>(`/hearings/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+    delete: async (id: number) => {
+      return this.request(`/hearings/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        reference: string;
+        message: string;
+      }>(`/hearings/${id}/delete_summary/`);
     },
     recordOutcome: async (
       id: number,
@@ -317,6 +392,15 @@ class ApiClient {
         method: 'PATCH',
         body: JSON.stringify(data),
       });
+    },
+    delete: async (id: number) => {
+      return this.request(`/tasks/${id}/`, { method: 'DELETE' });
+    },
+    deleteSummary: async (id: number) => {
+      return this.request<{
+        name: string;
+        message: string;
+      }>(`/tasks/${id}/delete_summary/`);
     },
     complete: async (id: number) => {
       return this.request<{ status: string; task: Task }>(

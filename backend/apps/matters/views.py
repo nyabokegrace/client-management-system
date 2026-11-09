@@ -7,8 +7,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Matter, MatterStatus
 from .serializers import MatterListSerializer, MatterDetailSerializer
-from apps.audit.models import log_activity, AuditAction, AuditModule
-from apps.accounts.permissions import IsInternalStaff
+from apps.audit.models import AuditAction, AuditModule, log_activity
+from apps.audit.utils import record_create_audit, record_update_audit, record_delete_audit
+from apps.accounts.permissions import IsAdministrator, IsInternalStaff
 
 
 class MatterViewSet(viewsets.ModelViewSet):
@@ -33,6 +34,11 @@ class MatterViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'date_opened', 'priority', 'status', 'matter_reference']
     ordering = ['-created_at']
 
+    def get_permissions(self):
+        if self.action in ['destroy']:
+            return [IsAdministrator()]
+        return [IsAuthenticated(), IsInternalStaff()]
+
     def get_serializer_class(self):
         if self.action == 'list':
             return MatterListSerializer
@@ -40,25 +46,37 @@ class MatterViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         matter = serializer.save(created_by=self.request.user)
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.CREATE,
-            module=AuditModule.MATTER,
-            target_id=matter.id,
-            target_repr=f"{matter.matter_reference} - {matter.title}",
-            details={'client_id': matter.client_id, 'matter_type': matter.matter_type, 'status': matter.status}
-        )
+        record_create_audit(self.request.user, AuditModule.MATTER, matter)
 
     def perform_update(self, serializer):
+        old_matter = Matter.objects.get(pk=serializer.instance.pk)
         matter = serializer.save()
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.UPDATE,
-            module=AuditModule.MATTER,
-            target_id=matter.id,
-            target_repr=f"{matter.matter_reference} - {matter.title}",
-            details={'status': matter.status, 'priority': matter.priority}
-        )
+        record_update_audit(self.request.user, AuditModule.MATTER, old_matter, matter)
+
+    def perform_destroy(self, instance):
+        record_delete_audit(self.request.user, AuditModule.MATTER, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def delete_summary(self, request, pk=None):
+        matter = self.get_object()
+        hearings_count = matter.hearings.count()
+        tasks_count = matter.tasks.count()
+        case_updates_count = matter.case_updates.count()
+        documents_count = matter.documents.count()
+        return Response({
+            'name': matter.title,
+            'reference': matter.matter_reference,
+            'hearings_count': hearings_count,
+            'tasks_count': tasks_count,
+            'case_updates_count': case_updates_count,
+            'documents_count': documents_count,
+            'message': (
+                f"This matter has {hearings_count} hearings, {tasks_count} tasks and "
+                f"{case_updates_count} case updates, which will also be deleted. "
+                f"Linked documents are kept but unlinked."
+            )
+        })
 
     @action(detail=True, methods=['post'])
     def change_status(self, request, pk=None):
@@ -66,17 +84,17 @@ class MatterViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         if new_status not in MatterStatus.values:
             return Response({'error': f'Invalid status. Allowed values: {MatterStatus.values}'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         old_status = matter.status
         matter.status = new_status
         matter.save(update_fields=['status', 'updated_at'])
-        
+
         log_activity(
             actor=request.user,
             action=AuditAction.STATUS_CHANGE,
             module=AuditModule.MATTER,
-            target_id=matter.id,
+            target_id=str(matter.id),
             target_repr=f"{matter.matter_reference} - {matter.title}",
-            details={'from': old_status, 'to': new_status}
+            details={'changes': {'status': {'old': old_status, 'new': new_status}}}
         )
         return Response({'status': f'Status updated to {matter.get_status_display()}', 'matter': MatterDetailSerializer(matter).data})

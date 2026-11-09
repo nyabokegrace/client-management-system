@@ -2,26 +2,26 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Calendar as CalendarIcon,
+  Calendar,
   Plus,
-  Search,
-  Filter,
-  CheckCircle,
   Clock,
   MapPin,
-  ExternalLink,
+  CheckCircle2,
   FileCheck,
+  Building,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
-import { Hearing, Matter, User } from '../../types';
+import { Hearing, Matter } from '../../types';
 
 export default function HearingsPage() {
   const [hearings, setHearings] = useState<Hearing[]>([]);
   const [matters, setMatters] = useState<Matter[]>([]);
-  const [advocates, setAdvocates] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'all'>('upcoming');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -29,15 +29,19 @@ export default function HearingsPage() {
   const [selectedHearing, setSelectedHearing] = useState<Hearing | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Edit & Delete state
+  const [editingHearing, setEditingHearing] = useState<Hearing | null>(null);
+  const [deletingHearing, setDeletingHearing] = useState<Hearing | null>(null);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+
   // Form states
   const [formData, setFormData] = useState({
     matter: 0,
     hearing_type: 'mention',
-    hearing_date: new Date().toISOString().slice(0, 16),
+    hearing_date: '',
     court: '',
     court_case_number: '',
     location_details: '',
-    assigned_advocate: null as number | null,
     notes: '',
   });
 
@@ -49,15 +53,13 @@ export default function HearingsPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [hearingsRes, mattersRes, usersRes] = await Promise.all([
+      const [hearingsRes, mattersRes] = await Promise.all([
         activeTab === 'upcoming' ? api.hearings.upcoming() : api.hearings.list(),
         api.matters.list(),
-        api.users.list({ role: 'advocate' }),
       ]);
 
       setHearings(Array.isArray(hearingsRes) ? hearingsRes : (hearingsRes as any).results || []);
-      setMatters(Array.isArray(mattersRes) ? mattersRes : mattersRes.results || []);
-      setAdvocates(Array.isArray(usersRes) ? usersRes : usersRes.results || []);
+      setMatters(Array.isArray(mattersRes) ? mattersRes : (mattersRes as any).results || []);
     } catch {
       // ignore
     } finally {
@@ -69,37 +71,68 @@ export default function HearingsPage() {
     fetchData();
   }, [activeTab]);
 
-  const handleScheduleHearing = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingHearing(null);
+    setFormData({
+      matter: 0,
+      hearing_type: 'mention',
+      hearing_date: '',
+      court: '',
+      court_case_number: '',
+      location_details: '',
+      notes: '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (h: Hearing) => {
+    setEditingHearing(h);
+    setFormData({
+      matter: h.matter,
+      hearing_type: h.hearing_type,
+      hearing_date: h.hearing_date ? h.hearing_date.slice(0, 16) : '',
+      court: h.court || '',
+      court_case_number: h.court_case_number || '',
+      location_details: h.location_details || '',
+      notes: h.notes || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openDeleteModal = (h: Hearing) => {
+    setDeletingHearing(h);
+    setIsDeleteOpen(true);
+  };
+
+  const handleSaveHearing = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.matter) {
-      alert('Please select a matter.');
+      alert('Please select an active legal matter.');
       return;
     }
 
     try {
       setSubmitting(true);
-      await api.hearings.create({
-        ...formData,
-        hearing_date: new Date(formData.hearing_date).toISOString(),
-        assigned_advocate: formData.assigned_advocate || undefined,
-      });
+      if (editingHearing) {
+        await api.hearings.update(editingHearing.id, formData);
+      } else {
+        await api.hearings.create(formData);
+      }
       setIsModalOpen(false);
-      setFormData({
-        matter: 0,
-        hearing_type: 'mention',
-        hearing_date: new Date().toISOString().slice(0, 16),
-        court: '',
-        court_case_number: '',
-        location_details: '',
-        assigned_advocate: null,
-        notes: '',
-      });
+      setEditingHearing(null);
       fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Error scheduling hearing');
+      alert(err instanceof Error ? err.message : 'Failed to save court hearing');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleDeleteHearing = async () => {
+    if (!deletingHearing) return;
+    await api.hearings.delete(deletingHearing.id);
+    setDeletingHearing(null);
+    fetchData();
   };
 
   const handleRecordOutcome = async (e: React.FormEvent) => {
@@ -110,16 +143,14 @@ export default function HearingsPage() {
       setSubmitting(true);
       await api.hearings.recordOutcome(selectedHearing.id, {
         outcome_summary: outcomeData.outcome_summary,
-        next_hearing_date: outcomeData.next_hearing_date
-          ? new Date(outcomeData.next_hearing_date).toISOString()
-          : undefined,
+        next_hearing_date: outcomeData.next_hearing_date || undefined,
       });
       setOutcomeModalOpen(false);
       setSelectedHearing(null);
       setOutcomeData({ outcome_summary: '', next_hearing_date: '' });
       fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Error recording outcome');
+      alert(err instanceof Error ? err.message : 'Error recording hearing outcome');
     } finally {
       setSubmitting(false);
     }
@@ -128,12 +159,12 @@ export default function HearingsPage() {
   return (
     <div className="flex-1 flex flex-col pb-12">
       <Header
-        title="Calendar & Court Hearings"
-        subtitle="Court diary, cause list schedule, virtual hearing links and post-appearance proceedings records"
+        title="Hearings & Court Diary"
+        subtitle="Mentions, trials, rulings and judicial conference schedules"
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Hearings' }]}
         actions={
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openCreateModal}
             className="inline-flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors"
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" />
@@ -153,7 +184,7 @@ export default function HearingsPage() {
                 : 'border-transparent text-gray-500 hover:text-black'
             }`}
           >
-            Upcoming Diary & Appearances
+            Upcoming Diary Schedule
           </button>
           <button
             onClick={() => setActiveTab('all')}
@@ -163,21 +194,20 @@ export default function HearingsPage() {
                 : 'border-transparent text-gray-500 hover:text-black'
             }`}
           >
-            All Historical Hearing Records
+            All Historical Hearings
           </button>
         </div>
 
-        {/* Hearings List */}
-        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
+        {/* Hearings Table */}
+        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
                   <th className="px-5 py-3">Date & Time</th>
-                  <th className="px-5 py-3">Hearing Type</th>
-                  <th className="px-5 py-3">Matter & Client</th>
-                  <th className="px-5 py-3">Court / Venue</th>
-                  <th className="px-5 py-3">Advocate</th>
+                  <th className="px-5 py-3">Matter Reference & Title</th>
+                  <th className="px-5 py-3">Hearing Purpose</th>
+                  <th className="px-5 py-3">Court / Chamber</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
@@ -185,53 +215,61 @@ export default function HearingsPage() {
               <tbody className="divide-y divide-[#E5E7EB]">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-gray-500">
+                    <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
                       Loading court hearings...
                     </td>
                   </tr>
                 ) : hearings.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-gray-500">
-                      <CalendarIcon className="w-8 h-8 mx-auto text-gray-300 mb-2" />
-                      <p className="font-medium text-gray-700">No hearings found for this view.</p>
-                      <p className="text-[11px] text-gray-400 mt-1">Schedule an upcoming mention, trial or ruling date.</p>
+                    <td colSpan={6} className="px-5 py-12 text-center text-gray-500">
+                      <Calendar className="w-8 h-8 mx-auto text-gray-300 mb-2" />
+                      <p className="font-medium text-gray-700">No scheduled hearings found.</p>
+                      <p className="text-[11px] text-gray-400 mt-1">Schedule a new court appearance to track court dates.</p>
                     </td>
                   </tr>
                 ) : (
                   hearings.map((h) => (
                     <tr key={h.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3.5">
+                      <td className="px-5 py-3.5 whitespace-nowrap">
                         <div className="font-bold text-gray-900">
-                          {new Date(h.hearing_date).toLocaleDateString([], {
-                            weekday: 'short',
-                            year: 'numeric',
-                            month: 'short',
+                          {new Date(h.hearing_date).toLocaleDateString('en-GB', {
+                            timeZone: 'Africa/Nairobi',
                             day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
                           })}
                         </div>
-                        <div className="text-[11px] text-gray-500 flex items-center mt-0.5">
-                          <Clock className="w-3 h-3 mr-1" />
-                          {new Date(h.hearing_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className="text-[11px] text-gray-500 flex items-center">
+                          <Clock className="w-3 h-3 mr-1 text-gray-400" />
+                          {new Date(h.hearing_date).toLocaleTimeString('en-GB', {
+                            timeZone: 'Africa/Nairobi',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </div>
                       </td>
                       <td className="px-5 py-3.5">
-                        <Badge variant="info" size="sm">
+                        <div className="font-mono text-[11px] font-semibold text-black">
+                          {h.matter_reference}
+                        </div>
+                        <div className="font-medium text-gray-800 line-clamp-1">
+                          {h.matter_title}
+                        </div>
+                        <div className="text-[11px] text-gray-400">
+                          Client: {h.client_name || 'N/A'}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Badge variant="default" size="sm">
                           {h.hearing_type_display || h.hearing_type}
                         </Badge>
                       </td>
-                      <td className="px-5 py-3.5">
-                        <div className="font-mono font-medium text-black">{h.matter_reference}</div>
-                        <div className="text-gray-600 line-clamp-1">{h.matter_title}</div>
-                      </td>
                       <td className="px-5 py-3.5 space-y-0.5">
-                        <div className="font-medium text-gray-800">{h.court || 'Milimani Courts'}</div>
+                        <div className="font-medium text-gray-800">{h.court || 'Court Forum'}</div>
                         <div className="text-[11px] text-gray-500 flex items-center">
                           <MapPin className="w-3 h-3 mr-1 text-gray-400" />
                           {h.location_details || 'Courtroom'}
                         </div>
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-700">
-                        {h.assigned_advocate_name || 'Counsel'}
                       </td>
                       <td className="px-5 py-3.5">
                         <Badge
@@ -247,24 +285,33 @@ export default function HearingsPage() {
                           {h.status_display || h.status}
                         </Badge>
                       </td>
-                      <td className="px-5 py-3.5 text-right">
+                      <td className="px-5 py-3.5 text-right space-x-1.5 whitespace-nowrap">
                         {h.status === 'scheduled' && (
                           <button
                             onClick={() => {
                               setSelectedHearing(h);
                               setOutcomeModalOpen(true);
                             }}
-                            className="inline-flex items-center px-2 py-1 text-xs border border-[#E5E7EB] rounded font-medium hover:bg-gray-100 text-black transition-colors"
+                            className="inline-flex items-center px-2 py-1 text-[11px] border border-[#E5E7EB] rounded font-medium hover:bg-gray-100 text-black transition-colors"
                           >
                             <FileCheck className="w-3.5 h-3.5 mr-1" />
-                            Record Outcome
+                            Outcome
                           </button>
                         )}
-                        {h.outcome_summary && (
-                          <div className="text-[11px] text-gray-500 italic max-w-xs truncate text-right">
-                            {h.outcome_summary}
-                          </div>
-                        )}
+                        <button
+                          onClick={() => openEditModal(h)}
+                          title="Edit hearing"
+                          className="p-1.5 text-gray-400 hover:text-black rounded hover:bg-gray-100 transition-colors inline-flex items-center"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(h)}
+                          title="Delete hearing"
+                          className="p-1.5 text-gray-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors inline-flex items-center"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -275,15 +322,22 @@ export default function HearingsPage() {
         </div>
       </div>
 
-      {/* Schedule Hearing Modal */}
+      {/* Schedule / Edit Hearing Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Schedule Court Hearing"
-        description="Calendar a mention, trial date, ruling or chamber appearance."
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingHearing(null);
+        }}
+        title={editingHearing ? 'Edit Court Hearing' : 'Schedule Court Hearing'}
+        description={
+          editingHearing
+            ? `Update hearing date, forum, or proceedings details for ${editingHearing.matter_reference}.`
+            : 'Enter an upcoming mention, trial, ruling, or court fixture in the litigation calendar.'
+        }
         maxWidth="lg"
       >
-        <form onSubmit={handleScheduleHearing} className="space-y-4 text-xs">
+        <form onSubmit={handleSaveHearing} className="space-y-4 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Select Legal Matter *
@@ -294,10 +348,10 @@ export default function HearingsPage() {
               onChange={(e) => setFormData({ ...formData, matter: Number(e.target.value) })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
             >
-              <option value={0}>— Select Matter —</option>
+              <option value={0}>— Select Associated Case File —</option>
               {matters.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.matter_reference} - {m.title}
+                  {m.matter_reference} — {m.title}
                 </option>
               ))}
             </select>
@@ -306,26 +360,26 @@ export default function HearingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Hearing Type
+                Hearing Type *
               </label>
               <select
                 value={formData.hearing_type}
                 onChange={(e) => setFormData({ ...formData, hearing_type: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               >
-                <option value="mention">Mention</option>
-                <option value="application">Hearing of Application</option>
-                <option value="trial">Main Trial / Hearing</option>
-                <option value="ruling">Ruling</option>
-                <option value="judgment">Judgment</option>
-                <option value="pre_trial">Pre-Trial Conference</option>
-                <option value="mediation">Court Annexed Mediation</option>
-                <option value="taxation">Taxation of Costs</option>
+                <option value="mention">Mention (Directions / Compliance)</option>
+                <option value="hearing">Main Hearing / Trial</option>
+                <option value="ruling">Ruling / Judgment Delivery</option>
+                <option value="conference">Pre-Trial Conference</option>
+                <option value="mediation">Court-Annexed Mediation</option>
+                <option value="arbitration">Arbitration Session</option>
+                <option value="other">Other Judicial Appearance</option>
               </select>
             </div>
+
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Date & Time *
+                Hearing Date & Time *
               </label>
               <input
                 type="datetime-local"
@@ -340,44 +394,29 @@ export default function HearingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Court / Forum
+                Court / Tribunal
               </label>
               <input
                 type="text"
-                placeholder="Defaults to matter's court if empty"
+                placeholder="e.g. Milimani High Court (Commercial)"
                 value={formData.court}
                 onChange={(e) => setFormData({ ...formData, court: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               />
             </div>
+
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Assigned Advocate
+                Courtroom / Virtual Link
               </label>
-              <select
-                value={formData.assigned_advocate || ''}
-                onChange={(e) => setFormData({ ...formData, assigned_advocate: e.target.value ? Number(e.target.value) : null })}
+              <input
+                type="text"
+                placeholder="e.g. Courtroom 4 / Teams Link"
+                value={formData.location_details}
+                onChange={(e) => setFormData({ ...formData, location_details: e.target.value })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              >
-                <option value="">— Select Advocate —</option>
-                {advocates.map((a) => (
-                  <option key={a.id} value={a.id}>{a.full_name}</option>
-                ))}
-              </select>
+              />
             </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Venue / Virtual Court Details
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Courtroom No. 7 / MS Teams Link"
-              value={formData.location_details}
-              onChange={(e) => setFormData({ ...formData, location_details: e.target.value })}
-              className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-            />
           </div>
 
           <div>
@@ -385,7 +424,8 @@ export default function HearingsPage() {
               Instructions & Preparation Notes
             </label>
             <textarea
-              rows={2}
+              rows={3}
+              placeholder="e.g. Ensure physical bundle is served on 1st Respondent prior to mention."
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
@@ -395,7 +435,10 @@ export default function HearingsPage() {
           <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
             <button
               type="button"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingHearing(null);
+              }}
               className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
             >
               Cancel
@@ -403,9 +446,9 @@ export default function HearingsPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
+              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
             >
-              {submitting ? 'Scheduling...' : 'Schedule Hearing'}
+              {submitting ? 'Saving...' : editingHearing ? 'Save Changes' : 'Schedule Appearance'}
             </button>
           </div>
         </form>
@@ -414,20 +457,27 @@ export default function HearingsPage() {
       {/* Record Outcome Modal */}
       <Modal
         isOpen={outcomeModalOpen}
-        onClose={() => setOutcomeModalOpen(false)}
-        title="Record Hearing Proceedings Outcome"
-        description={`Record judicial orders, directions, and next dates for ${selectedHearing?.matter_reference}.`}
-        maxWidth="md"
+        onClose={() => {
+          setOutcomeModalOpen(false);
+          setSelectedHearing(null);
+        }}
+        title="Record Hearing Outcome & Orders"
+        description={
+          selectedHearing
+            ? `Record court directions for ${selectedHearing.matter_reference} — ${selectedHearing.court || 'Court'}`
+            : 'Record court directions and proceedings outcome.'
+        }
+        maxWidth="lg"
       >
         <form onSubmit={handleRecordOutcome} className="space-y-4 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Court Orders / Proceedings Summary *
+              Proceedings Outcome & Court Directions *
             </label>
             <textarea
-              rows={4}
               required
-              placeholder="Record judge's directions, filings admitted, oral arguments made, or consent entered..."
+              rows={4}
+              placeholder="e.g. Mention before Lady Justice Wanjala. Respondent granted 14 days to file Replying Affidavit. Matter adjourned to 12th December for compliance."
               value={outcomeData.outcome_summary}
               onChange={(e) => setOutcomeData({ ...outcomeData, outcome_summary: e.target.value })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
@@ -436,7 +486,7 @@ export default function HearingsPage() {
 
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Next Court Hearing Date (If Fixed)
+              Next Hearing / Mention Date (If ordered by Court)
             </label>
             <input
               type="datetime-local"
@@ -449,7 +499,10 @@ export default function HearingsPage() {
           <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
             <button
               type="button"
-              onClick={() => setOutcomeModalOpen(false)}
+              onClick={() => {
+                setOutcomeModalOpen(false);
+                setSelectedHearing(null);
+              }}
               className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
             >
               Cancel
@@ -457,13 +510,29 @@ export default function HearingsPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
+              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
             >
-              {submitting ? 'Saving...' : 'Save Outcome'}
+              {submitting ? 'Recording...' : 'Save Court Outcome'}
             </button>
           </div>
         </form>
       </Modal>
+
+      {/* Delete Confirmation Modal */}
+      {deletingHearing && (
+        <DeleteConfirmModal
+          isOpen={isDeleteOpen}
+          onClose={() => {
+            setIsDeleteOpen(false);
+            setDeletingHearing(null);
+          }}
+          onConfirm={handleDeleteHearing}
+          title="Delete Court Hearing"
+          recordName={deletingHearing.matter_reference || deletingHearing.matter_title || 'Court Hearing'}
+          recordReference={deletingHearing.matter_reference}
+          message={`Are you sure you want to permanently delete this hearing on ${new Date(deletingHearing.hearing_date).toLocaleDateString()} for matter ${deletingHearing.matter_reference || deletingHearing.matter_title || ''}? This action cannot be undone.`}
+        />
+      )}
     </div>
   );
 }

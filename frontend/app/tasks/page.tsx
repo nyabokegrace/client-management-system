@@ -4,34 +4,36 @@ import React, { useState, useEffect } from 'react';
 import {
   CheckSquare,
   Plus,
-  Search,
-  Filter,
-  CheckCircle,
   Clock,
-  AlertTriangle,
-  User as UserIcon,
-  Calendar,
+  AlertCircle,
+  CheckCircle,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
-import { Task, Matter, User, TaskPriority, TaskStatus } from '../../types';
+import { Task, Matter, TaskPriority, TaskStatus } from '../../types';
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [matters, setMatters] = useState<Matter[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterMode, setFilterMode] = useState<'all' | 'overdue'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Edit & Delete state
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [deletingTask, setDeletingTask] = useState<Task | null>(null);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+
   // Form state
   const [formData, setFormData] = useState({
     title: '',
     matter: 0,
-    assigned_to: null as number | null,
     priority: 'normal' as TaskPriority,
     status: 'todo' as TaskStatus,
     due_date: '',
@@ -41,15 +43,13 @@ export default function TasksPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [tasksRes, mattersRes, usersRes] = await Promise.all([
+      const [tasksRes, mattersRes] = await Promise.all([
         filterMode === 'overdue' ? api.tasks.overdue() : api.tasks.list(),
         api.matters.list(),
-        api.users.list(),
       ]);
 
       setTasks(Array.isArray(tasksRes) ? tasksRes : (tasksRes as any).results || []);
-      setMatters(Array.isArray(mattersRes) ? mattersRes : mattersRes.results || []);
-      setUsers(Array.isArray(usersRes) ? usersRes : usersRes.results || []);
+      setMatters(Array.isArray(mattersRes) ? mattersRes : (mattersRes as any).results || []);
     } catch {
       // ignore
     } finally {
@@ -61,35 +61,74 @@ export default function TasksPage() {
     fetchData();
   }, [filterMode]);
 
-  const handleCreateTask = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingTask(null);
+    setFormData({
+      title: '',
+      matter: 0,
+      priority: 'normal',
+      status: 'todo',
+      due_date: '',
+      description: '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (task: Task) => {
+    setEditingTask(task);
+    setFormData({
+      title: task.title,
+      matter: task.matter || 0,
+      priority: task.priority,
+      status: task.status,
+      due_date: task.due_date ? task.due_date.slice(0, 16) : '',
+      description: task.description || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const openDeleteModal = (task: Task) => {
+    setDeletingTask(task);
+    setIsDeleteOpen(true);
+  };
+
+  const handleSaveTask = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       setSubmitting(true);
-      await api.tasks.create({
+      const payload: any = {
         title: formData.title,
-        matter: formData.matter || undefined,
-        assigned_to: formData.assigned_to || undefined,
         priority: formData.priority,
         status: formData.status,
-        due_date: formData.due_date ? new Date(formData.due_date).toISOString() : undefined,
         description: formData.description,
-      });
+        due_date: formData.due_date || undefined,
+      };
+      if (formData.matter && formData.matter > 0) {
+        payload.matter = formData.matter;
+      } else {
+        payload.matter = null;
+      }
+
+      if (editingTask) {
+        await api.tasks.update(editingTask.id, payload);
+      } else {
+        await api.tasks.create(payload);
+      }
       setIsModalOpen(false);
-      setFormData({
-        title: '',
-        matter: 0,
-        assigned_to: null,
-        priority: 'normal',
-        status: 'todo',
-        due_date: '',
-        description: '',
-      });
+      setEditingTask(null);
       fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Error creating task');
+      alert(err instanceof Error ? err.message : 'Failed to save task');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleDeleteTask = async () => {
+    if (!deletingTask) return;
+    await api.tasks.delete(deletingTask.id);
+    setDeletingTask(null);
+    fetchData();
   };
 
   const handleComplete = async (id: number) => {
@@ -105,21 +144,21 @@ export default function TasksPage() {
     <div className="flex-1 flex flex-col pb-12">
       <Header
         title="Tasks & Deadlines"
-        subtitle="Internal case assignments, compliance milestones, court submission deadlines and reminders"
+        subtitle="Time-critical court filing deadlines, pleading rejoinders and compliance action items"
         breadcrumbs={[{ name: 'Dashboard', href: '/' }, { name: 'Tasks' }]}
         actions={
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openCreateModal}
             className="inline-flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-[#111111] hover:bg-black rounded transition-colors"
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" />
-            Create Task
+            Create Action Task
           </button>
         }
       />
 
       <div className="px-6 py-6 space-y-4">
-        {/* Tabs */}
+        {/* Navigation Tabs */}
         <div className="border-b border-[#E5E7EB] flex space-x-6 text-xs font-medium">
           <button
             onClick={() => setFilterMode('all')}
@@ -129,32 +168,31 @@ export default function TasksPage() {
                 : 'border-transparent text-gray-500 hover:text-black'
             }`}
           >
-            All Case Tasks
+            All Action Tasks ({tasks.length})
           </button>
           <button
             onClick={() => setFilterMode('overdue')}
             className={`pb-3 font-semibold transition-colors border-b-2 flex items-center ${
               filterMode === 'overdue'
                 ? 'border-rose-600 text-rose-600'
-                : 'border-transparent text-gray-500 hover:text-black'
+                : 'border-transparent text-gray-500 hover:text-rose-600'
             }`}
           >
-            <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-            Overdue Tasks
+            <AlertCircle className="w-3.5 h-3.5 mr-1.5" />
+            Overdue Deadlines
           </button>
         </div>
 
         {/* Tasks Table */}
-        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden">
+        <div className="bg-white border border-[#E5E7EB] rounded overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB] text-[#374151] font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="px-5 py-3">Task Details</th>
-                  <th className="px-5 py-3">Legal Matter</th>
-                  <th className="px-5 py-3">Assigned Personnel</th>
+                  <th className="px-5 py-3">Task Title & Details</th>
+                  <th className="px-5 py-3">Matter Reference</th>
                   <th className="px-5 py-3">Priority</th>
-                  <th className="px-5 py-3">Due Date</th>
+                  <th className="px-5 py-3">Due Deadline</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
@@ -162,16 +200,16 @@ export default function TasksPage() {
               <tbody className="divide-y divide-[#E5E7EB]">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-gray-500">
-                      Loading firm tasks...
+                    <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
+                      Loading action tasks...
                     </td>
                   </tr>
                 ) : tasks.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-gray-500">
+                    <td colSpan={6} className="px-5 py-12 text-center text-gray-500">
                       <CheckSquare className="w-8 h-8 mx-auto text-gray-300 mb-2" />
-                      <p className="font-medium text-gray-700">No tasks found.</p>
-                      <p className="text-[11px] text-gray-400 mt-1">Assign a drafting task, filing deadline or client follow-up.</p>
+                      <p className="font-medium text-gray-700">No pending action tasks found.</p>
+                      <p className="text-[11px] text-gray-400 mt-1">All deadlines and court directives are currently up to date.</p>
                     </td>
                   </tr>
                 ) : (
@@ -187,9 +225,6 @@ export default function TasksPage() {
                       </td>
                       <td className="px-5 py-3.5 font-mono text-[11px] text-gray-700">
                         {task.matter_reference || 'General'}
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-700">
-                        {task.assigned_to_name || 'Unassigned'}
                       </td>
                       <td className="px-5 py-3.5">
                         <Badge
@@ -211,7 +246,7 @@ export default function TasksPage() {
                             <Badge variant="danger" size="sm">Overdue</Badge>
                           )}
                           <span className={`text-[11px] ${task.is_overdue ? 'text-rose-700 font-bold' : 'text-gray-600'}`}>
-                            {task.due_date ? new Date(task.due_date).toLocaleDateString() : 'No deadline'}
+                            {task.due_date ? new Date(task.due_date).toLocaleString('en-GB', { timeZone: 'Africa/Nairobi' }) : 'No deadline'}
                           </span>
                         </div>
                       </td>
@@ -229,17 +264,31 @@ export default function TasksPage() {
                           {task.status_display || task.status}
                         </Badge>
                       </td>
-                      <td className="px-5 py-3.5 text-right">
+                      <td className="px-5 py-3.5 text-right space-x-1.5 whitespace-nowrap">
                         {task.status !== 'completed' && task.status !== 'cancelled' && (
                           <button
                             onClick={() => handleComplete(task.id)}
                             title="Mark as completed"
-                            className="inline-flex items-center px-2 py-1 text-xs border border-[#E5E7EB] rounded font-medium hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 transition-colors"
+                            className="inline-flex items-center px-2 py-1 text-[11px] border border-[#E5E7EB] rounded font-medium hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 transition-colors"
                           >
                             <CheckCircle className="w-3.5 h-3.5 mr-1" />
                             Done
                           </button>
                         )}
+                        <button
+                          onClick={() => openEditModal(task)}
+                          title="Edit task"
+                          className="p-1.5 text-gray-400 hover:text-black rounded hover:bg-gray-100 transition-colors inline-flex items-center"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(task)}
+                          title="Delete task"
+                          className="p-1.5 text-gray-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors inline-flex items-center"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -250,15 +299,22 @@ export default function TasksPage() {
         </div>
       </div>
 
-      {/* Create Task Modal */}
+      {/* Create/Edit Task Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Create Task / Deadline"
-        description="Assign a drafting task, legal research item or deadline to internal counsel or staff."
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingTask(null);
+        }}
+        title={editingTask ? `Edit Task: ${editingTask.title}` : 'Create Action Task'}
+        description={
+          editingTask
+            ? 'Update task description, deadline, or priority level.'
+            : 'Assign a time-bound legal deliverable, registry filing, or procedural order.'
+        }
         maxWidth="lg"
       >
-        <form onSubmit={handleCreateTask} className="space-y-4 text-xs">
+        <form onSubmit={handleSaveTask} className="space-y-4 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
               Task Title *
@@ -266,7 +322,7 @@ export default function TasksPage() {
             <input
               type="text"
               required
-              placeholder="e.g. Draft written submissions on jurisdiction"
+              placeholder="e.g. File Replying Affidavit at Milimani Registry"
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
@@ -276,44 +332,25 @@ export default function TasksPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Legal Matter (Optional)
+                Linked Legal Matter (Optional)
               </label>
               <select
-                value={formData.matter}
+                value={formData.matter || 0}
                 onChange={(e) => setFormData({ ...formData, matter: Number(e.target.value) })}
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               >
-                <option value={0}>— Firm General Task —</option>
+                <option value={0}>— General Administrative Task —</option>
                 {matters.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.matter_reference} - {m.title}
+                    {m.matter_reference} — {m.title}
                   </option>
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Assign To
-              </label>
-              <select
-                value={formData.assigned_to || ''}
-                onChange={(e) => setFormData({ ...formData, assigned_to: e.target.value ? Number(e.target.value) : null })}
-                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-              >
-                <option value="">— Unassigned —</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name} ({u.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                Priority
+                Priority Level
               </label>
               <select
                 value={formData.priority}
@@ -323,9 +360,12 @@ export default function TasksPage() {
                 <option value="low">Low</option>
                 <option value="normal">Normal</option>
                 <option value="high">High</option>
-                <option value="urgent">Urgent</option>
+                <option value="urgent">Urgent Deadline</option>
               </select>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-gray-700 mb-1">
                 Due Date & Time
@@ -337,11 +377,26 @@ export default function TasksPage() {
                 className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
               />
             </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                Status
+              </label>
+              <select
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as TaskStatus })}
+                className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+              >
+                <option value="todo">To Do</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-              Task Details & Instructions
+              Instructions / Notes
             </label>
             <textarea
               rows={3}
@@ -354,7 +409,10 @@ export default function TasksPage() {
           <div className="pt-4 border-t border-[#E5E7EB] flex items-center justify-end space-x-2">
             <button
               type="button"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingTask(null);
+              }}
               className="px-4 py-2 border border-[#E5E7EB] rounded font-medium hover:bg-gray-50 text-gray-700"
             >
               Cancel
@@ -362,13 +420,29 @@ export default function TasksPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50"
+              className="px-4 py-2 bg-[#111111] text-white font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
             >
-              {submitting ? 'Creating...' : 'Create Task'}
+              {submitting ? 'Saving...' : editingTask ? 'Save Changes' : 'Create Task'}
             </button>
           </div>
         </form>
       </Modal>
+
+      {/* Delete Confirmation Modal */}
+      {deletingTask && (
+        <DeleteConfirmModal
+          isOpen={isDeleteOpen}
+          onClose={() => {
+            setIsDeleteOpen(false);
+            setDeletingTask(null);
+          }}
+          onConfirm={handleDeleteTask}
+          title="Delete Action Task"
+          recordName={deletingTask.title}
+          recordReference={deletingTask.matter_reference}
+          message={`Are you sure you want to permanently delete task "${deletingTask.title}"? This action cannot be undone.`}
+        />
+      )}
     </div>
   );
 }

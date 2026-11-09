@@ -8,8 +8,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Task, TaskStatus
 from .serializers import TaskSerializer
-from apps.audit.models import log_activity, AuditAction, AuditModule
-from apps.accounts.permissions import IsInternalStaff
+from apps.audit.models import AuditAction, AuditModule, log_activity
+from apps.audit.utils import record_create_audit, record_update_audit, record_delete_audit
+from apps.accounts.permissions import IsAdministrator, IsInternalStaff
 
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -33,27 +34,31 @@ class TaskViewSet(viewsets.ModelViewSet):
     ordering_fields = ['due_date', 'priority', 'created_at', 'status']
     ordering = ['due_date', '-priority']
 
+    def get_permissions(self):
+        if self.action in ['destroy']:
+            return [IsAdministrator()]
+        return [IsAuthenticated(), IsInternalStaff()]
+
     def perform_create(self, serializer):
         task = serializer.save(created_by=self.request.user)
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.CREATE,
-            module=AuditModule.TASK,
-            target_id=task.id,
-            target_repr=f"Task: {task.title}",
-            details={'assigned_to': task.assigned_to_id, 'priority': task.priority, 'due_date': str(task.due_date)}
-        )
+        record_create_audit(self.request.user, AuditModule.TASK, task)
 
     def perform_update(self, serializer):
+        old_task = Task.objects.get(pk=serializer.instance.pk)
         task = serializer.save()
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.UPDATE,
-            module=AuditModule.TASK,
-            target_id=task.id,
-            target_repr=f"Task: {task.title}",
-            details={'status': task.status, 'assigned_to': task.assigned_to_id}
-        )
+        record_update_audit(self.request.user, AuditModule.TASK, old_task, task)
+
+    def perform_destroy(self, instance):
+        record_delete_audit(self.request.user, AuditModule.TASK, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def delete_summary(self, request, pk=None):
+        task = self.get_object()
+        return Response({
+            'name': task.title,
+            'message': f"Are you sure you want to delete task '{task.title}'? This action cannot be undone."
+        })
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
@@ -63,9 +68,9 @@ class TaskViewSet(viewsets.ModelViewSet):
             actor=request.user,
             action=AuditAction.UPDATE,
             module=AuditModule.TASK,
-            target_id=task.id,
+            target_id=str(task.id),
             target_repr=f"Completed Task: {task.title}",
-            details={'completed_at': str(task.completed_at)}
+            details={'changes': {'status': {'old': TaskStatus.TODO, 'new': TaskStatus.COMPLETED}, 'completed_at': {'old': None, 'new': str(task.completed_at)}}}
         )
         return Response({'status': 'Task marked as completed.', 'task': TaskSerializer(task).data})
 

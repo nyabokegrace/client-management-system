@@ -5,6 +5,11 @@ from rest_framework import status
 from apps.accounts.models import User, UserRole
 from apps.clients.models import Client
 from apps.matters.models import Matter, MatterStatus, MatterPriority, MatterType
+from apps.hearings.models import Hearing
+from apps.tasks.models import Task
+from apps.case_updates.models import CaseUpdate
+from apps.documents.models import Document
+from apps.audit.models import AuditLog, AuditAction
 
 
 class MatterManagementTests(TestCase):
@@ -53,3 +58,79 @@ class MatterManagementTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         matter.refresh_from_db()
         self.assertEqual(matter.status, MatterStatus.ACTIVE)
+
+    def test_matter_delete_cascades_and_unlinks_documents(self):
+        admin = User.objects.create_superuser(
+            username='admin_peter',
+            email='admin2@siwoloadvocates.com',
+            password='Password123!',
+            role=UserRole.ADMIN
+        )
+        matter = Matter.objects.create(
+            title='Dispute Resolution',
+            client=self.client_record,
+            assigned_advocate=self.advocate,
+            created_by=self.advocate
+        )
+        hearing = Hearing.objects.create(
+            matter=matter,
+            hearing_type='mention',
+            hearing_date='2026-11-20T09:00:00Z',
+            created_by=self.advocate
+        )
+        task = Task.objects.create(
+            title='File Replying Affidavit',
+            matter=matter,
+            created_by=self.advocate
+        )
+        update = CaseUpdate.objects.create(
+            matter=matter,
+            title='Mention attended',
+            description='Orders granted',
+            author=self.advocate
+        )
+        doc = Document.objects.create(
+            title='Replying Affidavit',
+            client=self.client_record,
+            matter=matter,
+            storage_path='docs/test.pdf',
+            original_filename='test.pdf',
+            file_size_bytes=1024,
+            uploaded_by=self.advocate
+        )
+
+        self.client.force_authenticate(user=admin)
+        url = reverse('matter-detail', kwargs={'pk': matter.pk})
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Matter is deleted
+        self.assertFalse(Matter.objects.filter(pk=matter.pk).exists())
+        # Hearing, Task, CaseUpdate are deleted
+        self.assertFalse(Hearing.objects.filter(pk=hearing.pk).exists())
+        self.assertFalse(Task.objects.filter(pk=task.pk).exists())
+        self.assertFalse(CaseUpdate.objects.filter(pk=update.pk).exists())
+        # Document is KEPT but unlinked
+        doc.refresh_from_db()
+        self.assertIsNone(doc.matter)
+        self.assertEqual(doc.client, self.client_record)
+
+        # Audit log written
+        audit = AuditLog.objects.filter(action=AuditAction.DELETE, module='MATTER').first()
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.details.get('name'), 'Dispute Resolution')
+
+    def test_matter_update_records_audit_trail_changes(self):
+        matter = Matter.objects.create(
+            title='Corporate Merger',
+            client=self.client_record,
+            created_by=self.advocate
+        )
+        self.client.force_authenticate(user=self.advocate)
+        url = reverse('matter-detail', kwargs={'pk': matter.pk})
+        response = self.client.patch(url, {'priority': MatterPriority.URGENT}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        audit = AuditLog.objects.filter(action=AuditAction.UPDATE, module='MATTER', target_id=str(matter.pk)).first()
+        self.assertIsNotNone(audit)
+        self.assertIn('priority', audit.details.get('changes', {}))
+        self.assertEqual(audit.details['changes']['priority']['new'], MatterPriority.URGENT)

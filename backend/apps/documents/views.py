@@ -12,8 +12,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Document, DocumentCategory, ConfidentialityLevel, get_private_upload_path
 from .serializers import DocumentSerializer
-from apps.audit.models import log_activity, AuditAction, AuditModule
-from apps.accounts.permissions import IsInternalStaff
+from apps.audit.models import AuditAction, AuditModule, log_activity
+from apps.audit.utils import record_create_audit, record_update_audit, record_delete_audit
+from apps.accounts.permissions import IsAdministrator, IsInternalStaff
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -28,6 +29,11 @@ class DocumentViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'original_filename', 'description', 'client__client_reference', 'matter__matter_reference']
     ordering_fields = ['created_at', 'title', 'file_size_bytes', 'category']
     ordering = ['-created_at']
+
+    def get_permissions(self):
+        if self.action in ['destroy']:
+            return [IsAdministrator()]
+        return [IsAuthenticated(), IsInternalStaff()]
 
     def perform_create(self, serializer):
         uploaded_file = self.request.FILES.get('file')
@@ -51,14 +57,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
             file_size_bytes=uploaded_file.size,
         )
 
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.CREATE,
-            module=AuditModule.DOCUMENT,
-            target_id=doc.id,
-            target_repr=f"{doc.title} ({doc.original_filename})",
-            details={'client_id': doc.client_id, 'matter_id': doc.matter_id, 'file_size': doc.file_size_bytes}
-        )
+        record_create_audit(self.request.user, AuditModule.DOCUMENT, doc)
+
+    def perform_update(self, serializer):
+        old_doc = Document.objects.get(pk=serializer.instance.pk)
+        doc = serializer.save()
+        record_update_audit(self.request.user, AuditModule.DOCUMENT, old_doc, doc)
 
     def perform_destroy(self, instance):
         # Delete file from private disk
@@ -68,15 +72,20 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 file_path.unlink()
             except OSError:
                 pass
-        
-        log_activity(
-            actor=self.request.user,
-            action=AuditAction.DELETE,
-            module=AuditModule.DOCUMENT,
-            target_id=instance.id,
-            target_repr=f"{instance.title} ({instance.original_filename})"
-        )
-        super().perform_destroy(instance)
+
+        record_delete_audit(self.request.user, AuditModule.DOCUMENT, instance)
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def delete_summary(self, request, pk=None):
+        doc = self.get_object()
+        ref = doc.matter.matter_reference if doc.matter else (doc.client.client_reference if doc.client else '')
+        return Response({
+            'name': doc.title,
+            'filename': doc.original_filename,
+            'reference': ref,
+            'message': f"Deleting '{doc.title}' permanently removes the file ({doc.original_filename}) from disk. It cannot be recovered."
+        })
 
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
@@ -101,7 +110,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
             actor=request.user,
             action=AuditAction.DOWNLOAD,
             module=AuditModule.DOCUMENT,
-            target_id=doc.id,
+            target_id=str(doc.id),
             target_repr=f"{doc.title} ({doc.original_filename})"
         )
 
