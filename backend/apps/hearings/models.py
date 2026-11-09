@@ -58,6 +58,14 @@ class Hearing(models.Model):
     notes = models.TextField(blank=True, help_text="Preparation notes, instructions or reminders")
     outcome_summary = models.TextField(blank=True, help_text="Proceedings record, directions issued, or orders made")
     next_hearing_date = models.DateTimeField(null=True, blank=True, help_text="Next date set by the court")
+    originating_update = models.ForeignKey(
+        'case_updates.CaseUpdate',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='generated_hearings',
+        help_text="Case update that scheduled this hearing"
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -89,4 +97,11 @@ class Hearing(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.get_hearing_type_display()} on {self.hearing_date:%Y-%m-%d %H:%M} ({self.matter.matter_reference})"
+        ref = self.matter.matter_reference if self.matter else ''
+        if isinstance(self.hearing_date, str):
+            date_display = self.hearing_date
+        elif self.hearing_date:
+            date_display = f"{self.hearing_date:%Y-%m-%d %H:%M}"
+        else:
+            date_display = "Unscheduled"
+        return f"{self.get_hearing_type_display()} on {date_display} ({ref})"

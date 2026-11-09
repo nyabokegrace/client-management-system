@@ -371,14 +371,18 @@ class ApiClient {
         body: JSON.stringify(data),
       });
     },
-    delete: async (id: number) => {
-      return this.request(`/case-updates/${id}/`, { method: 'DELETE' });
+    delete: async (id: number, removeLinked: boolean = true) => {
+      const query = removeLinked ? '?remove_linked=true' : '';
+      return this.request(`/case-updates/${id}/${query}`, { method: 'DELETE' });
     },
     deleteSummary: async (id: number) => {
       return this.request<{
         name: string;
         reference: string;
         message: string;
+        generated_hearings?: Array<{ id: number; hearing_type: string; hearing_date: string }>;
+        generated_tasks?: Array<{ id: number; title: string; due_date: string; status: string }>;
+        has_completed_tasks?: boolean;
       }>(`/case-updates/${id}/delete_summary/`);
     },
   };

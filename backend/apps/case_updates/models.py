@@ -21,6 +21,14 @@ class CaseUpdate(models.Model):
         on_delete=models.CASCADE,
         related_name='case_updates'
     )
+    hearing = models.ForeignKey(
+        'hearings.Hearing',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='outcome_case_updates',
+        help_text="Optional completed hearing this update reports on"
+    )
     title = models.CharField(max_length=255)
     description = models.TextField()
     category = models.CharField(
@@ -29,6 +37,10 @@ class CaseUpdate(models.Model):
         default=UpdateCategory.GENERAL
     )
     event_datetime = models.DateTimeField(default=timezone.now)
+    share_with_client = models.BooleanField(
+        default=True,
+        help_text="Whether this update may be included in client progress reports"
+    )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -44,7 +56,13 @@ class CaseUpdate(models.Model):
         indexes = [
             models.Index(fields=['matter', '-event_datetime']),
             models.Index(fields=['category']),
+            models.Index(fields=['share_with_client']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.category == UpdateCategory.INTERNAL_REVIEW:
+            self.share_with_client = False
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"[{self.matter.matter_reference}] {self.title}"

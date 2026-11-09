@@ -140,14 +140,41 @@ export interface CaseUpdate {
   matter: number;
   matter_title?: string;
   matter_reference?: string;
+  hearing?: number | null;
+  hearing_details?: {
+    id: number;
+    hearing_type: string;
+    hearing_type_display: string;
+    hearing_date: string;
+    court?: string;
+    status: string;
+  } | null;
   title: string;
   description: string;
   category: string;
   category_display?: string;
   event_datetime: string;
+  share_with_client: boolean;
   author?: number | null;
   author_details?: User | null;
   author_name?: string;
+  generated_hearings?: Array<{
+    id: number;
+    hearing_type: string;
+    hearing_type_display: string;
+    hearing_date: string;
+    court?: string;
+    status: string;
+  }>;
+  generated_tasks?: Array<{
+    id: number;
+    title: string;
+    description?: string;
+    due_date?: string;
+    status: string;
+    status_display: string;
+    priority: string;
+  }>;
   created_at: string;
   updated_at: string;
 }

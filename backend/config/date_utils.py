@@ -20,6 +20,27 @@ def to_nairobi(dt):
     return dt.astimezone(NAIROBI_TZ)
 
 
+def parse_nairobi_datetime(val):
+    """
+    Parse an ISO string or datetime object into an aware datetime localized to Africa/Nairobi.
+    """
+    if not val:
+        return None
+    if isinstance(val, str):
+        from django.utils.dateparse import parse_datetime
+        dt = parse_datetime(val)
+        if dt is None:
+            try:
+                dt = datetime.datetime.fromisoformat(val)
+            except Exception:
+                return None
+    else:
+        dt = val
+    if isinstance(dt, datetime.datetime) and timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, NAIROBI_TZ)
+    return dt
+
+
 def format_nairobi_datetime(dt, fallback="N/A"):
     """
     Format a datetime object as '8 Nov 2026, 4:40 pm' in Africa/Nairobi timezone.

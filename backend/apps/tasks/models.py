@@ -55,6 +55,14 @@ class Task(models.Model):
     )
     due_date = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    originating_update = models.ForeignKey(
+        'case_updates.CaseUpdate',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='generated_tasks',
+        help_text="Case update that produced this action task"
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
