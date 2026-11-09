@@ -24,6 +24,7 @@ class AuditModule(models.TextChoices):
     HEARING = 'HEARING', 'Hearing'
     TASK = 'TASK', 'Task'
     REPORT = 'REPORT', 'Report'
+    CONTACT = 'CONTACT', 'Contact Record'
 
 
 class AuditLog(models.Model):

@@ -55,6 +55,7 @@ class MatterViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         record_delete_audit(self.request.user, AuditModule.MATTER, instance)
+        instance.tasks.all().delete()
         instance.delete()
 
     @action(detail=True, methods=['get'])
