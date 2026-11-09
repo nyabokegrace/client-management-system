@@ -4,8 +4,16 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.db.models import Count, Q
 from django.utils import timezone
-from config.date_utils import format_nairobi_datetime, format_nairobi_date
+from config.date_utils import format_nairobi_datetime, format_nairobi_date, parse_nairobi_datetime
 from rest_framework.views import APIView
+from rest_framework import status
+from pathlib import Path
+from apps.documents.models import Document, DocumentCategory, ConfidentialityLevel, get_private_upload_path
+from apps.audit.models import AuditAction, AuditModule, log_activity
+from apps.audit.utils import record_create_audit
+from .models import ClientReport, ReportMode
+from .serializers import ClientReportSerializer
+from .client_report_pdf import generate_client_report_pdf
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.negotiation import BaseContentNegotiation
@@ -343,3 +351,192 @@ class ExportReportPDFView(APIView):
                 for m in Matter.objects.select_related('client', 'assigned_advocate', 'opposing_contact').all().order_by('-created_at')
             ]
             return self._build_pdf('Matters Report', headers, rows, 'matters_report.pdf', use_landscape=True, inline=inline)
+
+
+class ClientReportListView(APIView):
+    permission_classes = [IsAuthenticated, IsInternalStaff]
+
+    def get(self, request):
+        matter_id = request.query_params.get('matter')
+        if not matter_id:
+            return Response({'error': 'matter parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        matter = Matter.objects.filter(pk=matter_id).first()
+        if not matter:
+            return Response({'error': 'Matter not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        reports = ClientReport.objects.filter(matter=matter).select_related('document', 'generated_by').order_by('-generated_at')
+        last_sent = reports.filter(sent_at__isnull=False).order_by('-sent_at').first()
+
+        return Response({
+            'matter_id': matter.id,
+            'matter_reference': matter.matter_reference,
+            'has_sent_report': last_sent is not None,
+            'last_sent_at': last_sent.sent_at if last_sent else None,
+            'last_sent_at_display': format_nairobi_datetime(last_sent.sent_at) if last_sent else None,
+            'reports': ClientReportSerializer(reports, many=True).data,
+        })
+
+
+class GenerateClientReportView(APIView):
+    permission_classes = [IsAuthenticated, IsInternalStaff]
+
+    def post(self, request):
+        matter_id = request.data.get('matter_id')
+        if not matter_id:
+            return Response({'error': 'matter_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        matter = Matter.objects.select_related('client').filter(pk=matter_id).first()
+        if not matter:
+            return Response({'error': 'Matter not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        mode = request.data.get('mode', ReportMode.FULL_HISTORY)
+        now = timezone.now()
+
+        # Base query: only client-facing updates (never include internal review notes)
+        updates_qs = CaseUpdate.objects.filter(
+            matter=matter,
+            share_with_client=True
+        ).select_related('hearing').order_by('event_datetime')
+
+        period_start = None
+        period_end = now
+
+        if mode == ReportMode.SINCE_LAST_SENT:
+            last_sent = matter.client_reports.filter(sent_at__isnull=False).order_by('-sent_at').first()
+            if not last_sent:
+                return Response(
+                    {'error': 'No previous report has been marked as sent for this matter.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            period_start = last_sent.sent_at
+            updates_qs = updates_qs.filter(event_datetime__gte=period_start)
+            period_covered = f"Updates since last sent report ({format_nairobi_datetime(last_sent.sent_at)})"
+
+        elif mode == ReportMode.CUSTOM_RANGE:
+            start_str = request.data.get('start_date')
+            end_str = request.data.get('end_date')
+            if not start_str or not end_str:
+                return Response(
+                    {'error': 'Both start_date and end_date are required for custom date range.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            start_dt = parse_nairobi_datetime(start_str)
+            end_dt = parse_nairobi_datetime(end_str)
+            if not start_dt or not end_dt:
+                return Response(
+                    {'error': 'Invalid date format provided.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if end_dt.hour == 0 and end_dt.minute == 0:
+                end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            period_start = start_dt
+            period_end = end_dt
+            updates_qs = updates_qs.filter(event_datetime__gte=start_dt, event_datetime__lte=end_dt)
+            period_covered = f"{format_nairobi_date(start_dt)} to {format_nairobi_date(end_dt)}"
+
+        else:
+            mode = ReportMode.FULL_HISTORY
+            period_covered = f"Full history up to {format_nairobi_datetime(now)}"
+
+        updates = list(updates_qs)
+
+        # Prominently show next scheduled court date if one is currently scheduled
+        next_hearing = Hearing.objects.filter(
+            matter=matter,
+            status=HearingStatus.SCHEDULED,
+            hearing_date__gte=now
+        ).order_by('hearing_date').first()
+
+        # Generate PDF bytes
+        pdf_bytes = generate_client_report_pdf(
+            matter=matter,
+            updates=updates,
+            next_hearing=next_hearing,
+            period_covered=period_covered,
+            generated_at=now
+        )
+
+        # Save to private documents storage
+        client = matter.client
+        safe_ref = matter.matter_reference.replace('/', '_').replace(' ', '_')
+        filename = f"Client_Report_{safe_ref}_{now.strftime('%Y%m%d_%H%M%S')}.pdf"
+        rel_storage_path = get_private_upload_path(client, filename)
+        full_dest_path = Path(settings.PRIVATE_STORAGE_ROOT) / rel_storage_path
+        full_dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(full_dest_path, 'wb+') as destination:
+            destination.write(pdf_bytes)
+
+        # Create Document record
+        doc = Document.objects.create(
+            title=f"Client Report - {matter.matter_reference} ({format_nairobi_date(now)})",
+            category=DocumentCategory.CLIENT_REPORT,
+            confidentiality=ConfidentialityLevel.STANDARD,
+            client=client,
+            matter=matter,
+            original_filename=filename,
+            storage_path=rel_storage_path,
+            file_type='application/pdf',
+            file_size_bytes=len(pdf_bytes),
+            description=f"Client progress report covering {period_covered}",
+            uploaded_by=request.user
+        )
+        record_create_audit(request.user, AuditModule.DOCUMENT, doc)
+
+        # Create ClientReport tracking record
+        report = ClientReport.objects.create(
+            matter=matter,
+            client=client,
+            document=doc,
+            mode=mode,
+            period_start=period_start,
+            period_end=period_end,
+            period_covered=period_covered,
+            generated_at=now,
+            generated_by=request.user,
+        )
+
+        log_activity(
+            actor=request.user,
+            action=AuditAction.CREATE,
+            module=AuditModule.REPORT,
+            target_id=str(report.id),
+            target_repr=f"Client report generated for {matter.matter_reference} ({period_covered})",
+            details={
+                'matter_id': matter.id,
+                'matter_reference': matter.matter_reference,
+                'mode': mode,
+                'period_covered': period_covered,
+                'document_id': doc.id,
+                'updates_count': len(updates),
+            }
+        )
+
+        return Response(ClientReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+
+class MarkClientReportSentView(APIView):
+    permission_classes = [IsAuthenticated, IsInternalStaff]
+
+    def post(self, request, pk=None):
+        report = ClientReport.objects.select_related('matter').filter(pk=pk).first()
+        if not report:
+            return Response({'error': 'Client report not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        old_sent = report.sent_at
+        report.sent_at = timezone.now()
+        report.save(update_fields=['sent_at'])
+
+        log_activity(
+            actor=request.user,
+            action=AuditAction.UPDATE,
+            module=AuditModule.REPORT,
+            target_id=str(report.id),
+            target_repr=f"Client report {report.id} marked as sent for {report.matter.matter_reference}",
+            details={'changes': {
+                'sent_at': {'old': str(old_sent) if old_sent else None, 'new': str(report.sent_at)}
+            }}
+        )
+
+        return Response(ClientReportSerializer(report).data, status=status.HTTP_200_OK)

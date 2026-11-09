@@ -259,3 +259,25 @@ export interface DashboardSummary {
   recent_case_updates: CaseUpdate[];
   recent_activity: AuditLog[];
 }
+
+export interface ClientReport {
+  id: number;
+  matter: number;
+  client: number;
+  document: number;
+  document_title: string;
+  document_filename: string;
+  document_size_display: string;
+  mode: 'since_last_sent' | 'full_history' | 'custom_range';
+  mode_display: string;
+  period_start?: string | null;
+  period_end?: string | null;
+  period_covered: string;
+  generated_at: string;
+  generated_at_display: string;
+  generated_by?: number | null;
+  generated_by_name?: string;
+  sent_at?: string | null;
+  sent_at_display?: string | null;
+}
+

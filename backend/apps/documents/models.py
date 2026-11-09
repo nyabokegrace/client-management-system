@@ -13,6 +13,7 @@ class DocumentCategory(models.TextChoices):
     CONTRACTS = 'contracts', 'Contracts & Agreements'
     CORPORATE = 'corporate', 'Statutory & Corporate Documents'
     FINANCIAL = 'financial', 'Billing, Invoices & Receipts'
+    CLIENT_REPORT = 'client_report', 'Client Report'
     GENERAL = 'general', 'General Legal Document'
 
 

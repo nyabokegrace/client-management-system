@@ -11,6 +11,10 @@ import {
   MapPin,
   UserCheck,
   RefreshCw,
+  FileText,
+  Download,
+  CheckCircle,
+  Clock,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
@@ -18,7 +22,7 @@ import { Modal } from '../../components/Modal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { api } from '../../lib/api';
 import { getNairobiDateInputValue } from '../../lib/dates';
-import { Matter, Client, Contact, ContactType, MatterPriority, MatterStatus } from '../../types';
+import { Matter, Client, Contact, ContactType, MatterPriority, MatterStatus, ClientReport } from '../../types';
 
 export default function MattersPage() {
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -55,6 +59,23 @@ export default function MattersPage() {
     documents_count: number;
     message: string;
   } | null>(null);
+
+  // Client Progress Report modal state
+  const [clientReportMatter, setClientReportMatter] = useState<Matter | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportData, setReportData] = useState<{
+    matter_id: number;
+    matter_reference: string;
+    has_sent_report: boolean;
+    last_sent_at?: string | null;
+    last_sent_at_display?: string | null;
+    reports: ClientReport[];
+  } | null>(null);
+  const [reportMode, setReportMode] = useState<'since_last_sent' | 'full_history' | 'custom_range'>('full_history');
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [markingSentId, setMarkingSentId] = useState<number | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -266,6 +287,81 @@ export default function MattersPage() {
     }
   };
 
+  const openClientReportModal = async (m: Matter) => {
+    setClientReportMatter(m);
+    setReportStartDate('');
+    setReportEndDate(getNairobiDateInputValue());
+    setIsReportModalOpen(true);
+    try {
+      const data = await api.clientReports.list(m.id);
+      setReportData(data);
+      if (data.has_sent_report) {
+        setReportMode('since_last_sent');
+      } else {
+        setReportMode('full_history');
+      }
+    } catch {
+      setReportData(null);
+      setReportMode('full_history');
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    if (!clientReportMatter) return;
+    try {
+      setGeneratingReport(true);
+      await api.clientReports.generate({
+        matter_id: clientReportMatter.id,
+        mode: reportMode,
+        start_date: reportMode === 'custom_range' ? reportStartDate : undefined,
+        end_date: reportMode === 'custom_range' ? reportEndDate : undefined,
+      });
+      const data = await api.clientReports.list(clientReportMatter.id);
+      setReportData(data);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to generate client report');
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
+  const handleMarkReportSent = async (reportId: number) => {
+    if (!clientReportMatter) return;
+    try {
+      setMarkingSentId(reportId);
+      await api.clientReports.markSent(reportId);
+      const data = await api.clientReports.list(clientReportMatter.id);
+      setReportData(data);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to mark report as sent');
+    } finally {
+      setMarkingSentId(null);
+    }
+  };
+
+  const handleDownloadReport = async (documentId: number, filename: string) => {
+    try {
+      const token = localStorage.getItem('siwolo_token');
+      const url = `/api/v1/documents/${documentId}/download/`;
+      const response = await fetch(url, {
+        headers: token ? { Authorization: `Token ${token}` } : {},
+      });
+      if (!response.ok) {
+        throw new Error('Failed to retrieve document.');
+      }
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Error downloading report');
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col pb-12">
       <Header
@@ -421,6 +517,14 @@ export default function MattersPage() {
                         </select>
                       </td>
                       <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
+                        <button
+                          onClick={() => openClientReportModal(matter)}
+                          title="Generate or view Client Progress Reports"
+                          className="px-2 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors inline-flex items-center space-x-1"
+                        >
+                          <FileText className="w-3 h-3" />
+                          <span>Client Report</span>
+                        </button>
                         <button
                           onClick={() => openEditModal(matter)}
                           title="Edit matter"
@@ -853,6 +957,244 @@ export default function MattersPage() {
             )
           }
         />
+      )}
+
+      {/* Client Progress Report Modal */}
+      {clientReportMatter && (
+        <Modal
+          isOpen={isReportModalOpen}
+          onClose={() => {
+            setIsReportModalOpen(false);
+            setClientReportMatter(null);
+            setReportData(null);
+          }}
+          title={`Client Progress Report — ${clientReportMatter.matter_reference}`}
+          description={`Generate and track formal progress reports for ${clientReportMatter.client_name || 'Client'}.`}
+          maxWidth="2xl"
+        >
+          <div className="space-y-5 text-xs">
+            {/* Report Mode Choices */}
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded space-y-3">
+              <h4 className="font-semibold text-gray-900 text-xs">
+                Select Reporting Period
+              </h4>
+
+              <div className="space-y-2">
+                {/* 1. New since last sent */}
+                <label
+                  className={`flex items-start space-x-2.5 p-2 rounded border ${
+                    !reportData?.has_sent_report
+                      ? 'opacity-50 cursor-not-allowed bg-gray-100 border-gray-200'
+                      : reportMode === 'since_last_sent'
+                      ? 'bg-blue-50/50 border-blue-400 cursor-pointer'
+                      : 'bg-white border-gray-200 cursor-pointer hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="reportMode"
+                    value="since_last_sent"
+                    disabled={!reportData?.has_sent_report}
+                    checked={reportMode === 'since_last_sent'}
+                    onChange={() => setReportMode('since_last_sent')}
+                    className="mt-0.5 text-black focus:ring-black"
+                  />
+                  <div>
+                    <span className="font-semibold text-gray-900 block">
+                      New since last sent
+                    </span>
+                    <span className="text-[11px] text-gray-500">
+                      {reportData?.has_sent_report
+                        ? `Covers updates since last report sent on ${reportData.last_sent_at_display}`
+                        : 'Disabled: No report has been marked as sent yet for this matter.'}
+                    </span>
+                  </div>
+                </label>
+
+                {/* 2. Full history */}
+                <label
+                  className={`flex items-start space-x-2.5 p-2 rounded border cursor-pointer ${
+                    reportMode === 'full_history'
+                      ? 'bg-blue-50/50 border-blue-400'
+                      : 'bg-white border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="reportMode"
+                    value="full_history"
+                    checked={reportMode === 'full_history'}
+                    onChange={() => setReportMode('full_history')}
+                    className="mt-0.5 text-black focus:ring-black"
+                  />
+                  <div>
+                    <span className="font-semibold text-gray-900 block">
+                      Full history
+                    </span>
+                    <span className="text-[11px] text-gray-500">
+                      Includes all client-facing developments, directions and milestones from file opening to today.
+                    </span>
+                  </div>
+                </label>
+
+                {/* 3. Custom date range */}
+                <label
+                  className={`flex items-start space-x-2.5 p-2 rounded border cursor-pointer ${
+                    reportMode === 'custom_range'
+                      ? 'bg-blue-50/50 border-blue-400'
+                      : 'bg-white border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="reportMode"
+                    value="custom_range"
+                    checked={reportMode === 'custom_range'}
+                    onChange={() => setReportMode('custom_range')}
+                    className="mt-0.5 text-black focus:ring-black"
+                  />
+                  <div className="flex-1">
+                    <span className="font-semibold text-gray-900 block">
+                      Custom date range
+                    </span>
+                    <span className="text-[11px] text-gray-500">
+                      Filter client-facing updates between specific dates.
+                    </span>
+
+                    {reportMode === 'custom_range' && (
+                      <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-200">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-gray-600 mb-0.5">
+                            From Date
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={reportStartDate}
+                            onChange={(e) => setReportStartDate(e.target.value)}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-black"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-gray-600 mb-0.5">
+                            To Date
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={reportEndDate}
+                            onChange={(e) => setReportEndDate(e.target.value)}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:border-black"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleGenerateReport}
+                  disabled={
+                    generatingReport ||
+                    (reportMode === 'custom_range' && (!reportStartDate || !reportEndDate))
+                  }
+                  className="px-4 py-2 bg-[#111111] text-white text-xs font-semibold rounded hover:bg-black disabled:opacity-50 transition-colors inline-flex items-center"
+                >
+                  <FileText className="w-3.5 h-3.5 mr-1.5" />
+                  {generatingReport ? 'Generating & Storing PDF...' : 'Generate Progress Report PDF'}
+                </button>
+              </div>
+            </div>
+
+            {/* Dispatch & Generation History */}
+            <div>
+              <h4 className="font-semibold text-gray-900 text-xs mb-2 flex items-center justify-between">
+                <span>Previously Generated Reports for this Matter</span>
+                <span className="text-[11px] text-gray-400 font-normal">
+                  Saved automatically into Private Documents
+                </span>
+              </h4>
+
+              <div className="border border-gray-200 rounded overflow-hidden">
+                {!reportData?.reports || reportData.reports.length === 0 ? (
+                  <div className="p-6 text-center text-gray-400 text-xs">
+                    No client progress reports generated for this matter yet.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto max-h-56">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#F9FAFB] border-b border-gray-200 text-gray-600 font-semibold text-[11px]">
+                        <tr>
+                          <th className="px-3 py-2">Generated</th>
+                          <th className="px-3 py-2">Period Covered</th>
+                          <th className="px-3 py-2">Sent Status</th>
+                          <th className="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {reportData.reports.map((r) => (
+                          <tr key={r.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-900 font-medium">
+                              {r.generated_at_display}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600">
+                              {r.period_covered}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {r.sent_at ? (
+                                <span className="inline-flex items-center text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300 font-medium">
+                                  <CheckCircle className="w-3 h-3 mr-1 text-emerald-600" />
+                                  Sent: {r.sent_at_display}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkReportSent(r.id)}
+                                  disabled={markingSentId === r.id}
+                                  className="text-[11px] px-2 py-0.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 rounded font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {markingSentId === r.id ? 'Marking...' : 'Mark as sent'}
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadReport(r.document, r.document_filename)}
+                                title="Download Report PDF"
+                                className="p-1 text-gray-600 hover:text-black rounded hover:bg-gray-100 inline-flex items-center space-x-1"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span className="text-[11px]">Download</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsReportModalOpen(false);
+                  setClientReportMatter(null);
+                  setReportData(null);
+                }}
+                className="px-3 py-1.5 border border-[#E5E7EB] rounded font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

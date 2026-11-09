@@ -9,6 +9,7 @@ import {
   Task,
   AuditLog,
   DashboardSummary,
+  ClientReport,
 } from '../types';
 
 const API_BASE_URL = '/api/v1';
@@ -496,6 +497,36 @@ class ApiClient {
       return this.request<{ results: AuditLog[]; count: number } | AuditLog[]>(
         `/audit-logs/${query}`
       );
+    },
+  };
+
+  // Client Progress Reports
+  clientReports = {
+    list: async (matterId: number) => {
+      return this.request<{
+        matter_id: number;
+        matter_reference: string;
+        has_sent_report: boolean;
+        last_sent_at?: string | null;
+        last_sent_at_display?: string | null;
+        reports: ClientReport[];
+      }>(`/reports/client-reports/?matter=${matterId}`);
+    },
+    generate: async (data: {
+      matter_id: number;
+      mode: string;
+      start_date?: string;
+      end_date?: string;
+    }) => {
+      return this.request<ClientReport>('/reports/client-reports/generate/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    markSent: async (id: number) => {
+      return this.request<ClientReport>(`/reports/client-reports/${id}/mark-sent/`, {
+        method: 'POST',
+      });
     },
   };
 }

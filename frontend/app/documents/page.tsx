@@ -262,6 +262,7 @@ export default function DocumentsPage() {
               <option value="correspondence">Correspondence</option>
               <option value="contracts">Contracts</option>
               <option value="corporate">Corporate</option>
+              <option value="client_report">Client Reports</option>
               <option value="general">General</option>
             </select>
           </div>
@@ -419,6 +420,7 @@ export default function DocumentsPage() {
                 <option value="contracts">Contracts & Agreements</option>
                 <option value="corporate">Statutory & Corporate</option>
                 <option value="financial">Billing, Invoices & Receipts</option>
+                <option value="client_report">Client Progress Report</option>
                 <option value="general">General Legal Document</option>
               </select>
             </div>
