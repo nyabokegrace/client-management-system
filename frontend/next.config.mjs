@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  skipTrailingSlashRedirect: true,
 
   // 'standalone' produces a self-contained Node.js server in .next/standalone/
   // which is what the Docker image copies and runs via `node server.js`.
@@ -14,6 +15,10 @@ const nextConfig = {
     return process.env.NODE_ENV === 'production'
       ? [] // Nginx handles routing in production — no rewrites needed
       : [
+          {
+            source: '/api/:path*/',
+            destination: `${process.env.INTERNAL_API_URL || 'http://127.0.0.1:8000'}/api/:path*/`,
+          },
           {
             source: '/api/:path*',
             destination: `${process.env.INTERNAL_API_URL || 'http://127.0.0.1:8000'}/api/:path*`,
