@@ -175,3 +175,29 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_env.split(',')
 CORS_ALLOW_CREDENTIALS = True
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
+
+# =============================================================================
+# Email & Two-Factor Authentication Configuration
+# =============================================================================
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', FIRM_EMAIL)
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
+
+# Email backend selection
+import sys
+if 'test' in sys.argv:
+    EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+elif DEBUG:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
+# Two-Factor & Setup Code Configuration
+REQUIRE_2FA = os.getenv('REQUIRE_2FA', 'True').lower() in ('true', '1', 't')
+CHALLENGE_TTL_MINUTES = int(os.getenv('CHALLENGE_TTL_MINUTES', '10'))
+SETUP_CODE = os.getenv('SETUP_CODE')  # No default
+

@@ -5,11 +5,20 @@ from django.test import TestCase
 from django.urls import reverse
 from django.core.cache import cache
 from django.core.management import call_command
+from django.core import mail
 from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from .models import User, UserRole
+from .models import User, UserRole, LoginChallenge, ChallengePurpose
+from .emails import (
+    generate_six_digit_code,
+    hash_code,
+    verify_code_hash,
+    mask_email,
+    send_verification_email,
+    check_hourly_email_limit,
+)
 
 
 class AccountsAuthenticationTests(TestCase):
@@ -210,4 +219,178 @@ class AccountsAuthenticationTests(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('name', response.data)
+
+
+class StageAEmailAndChallengeTests(TestCase):
+    def setUp(self):
+        mail.outbox.clear()
+        self.user = User.objects.create_user(
+            username='siwolo_test',
+            email='counsel@siwoloadvocates.com',
+            password='TestPassword123!',
+            first_name='Peter',
+            last_name='Siwolo',
+            role=UserRole.ADMIN
+        )
+
+    def tearDown(self):
+        mail.outbox.clear()
+
+    def test_code_generation_format_and_hashing(self):
+        code = generate_six_digit_code()
+        self.assertEqual(len(code), 6)
+        self.assertTrue(code.isdigit())
+
+        hashed = hash_code(code)
+        self.assertEqual(len(hashed), 64)  # sha256 hex length
+        self.assertTrue(verify_code_hash(code, hashed))
+        self.assertFalse(verify_code_hash('999999', hashed) if code != '999999' else False)
+
+    def test_mask_email(self):
+        self.assertEqual(mask_email('info@siwoloadvocates.com'), 'i***@siwoloadvocates.com')
+        self.assertEqual(mask_email('peter.siwolo@siwoloadvocates.com'), 'p***@siwoloadvocates.com')
+        self.assertEqual(mask_email('a@domain.com'), 'a***@domain.com')
+
+    def test_verification_email_content(self):
+        code = '123456'
+        ok, err = send_verification_email('counsel@siwoloadvocates.com', code, purpose='login', ttl_minutes=10)
+        self.assertTrue(ok)
+        self.assertEqual(len(mail.outbox), 1)
+
+        email = mail.outbox[0]
+        self.assertEqual(email.subject, "Your Siwolo CMS verification code")
+        self.assertIn("123456", email.body)
+        self.assertIn("10 minutes", email.body)
+        self.assertIn("If you did not request this verification code", email.body)
+        # Check no links
+        self.assertNotIn("http://", email.body)
+        self.assertNotIn("https://", email.body)
+        # Check HTML alternative
+        self.assertEqual(len(email.alternatives), 1)
+        self.assertEqual(email.alternatives[0][1], "text/html")
+        self.assertNotIn("http://", email.alternatives[0][0])
+        self.assertNotIn("https://", email.alternatives[0][0])
+
+    def test_challenge_creation_and_success_flow(self):
+        challenge, code, sent_ok, _ = LoginChallenge.create_challenge(
+            user=self.user,
+            purpose=ChallengePurpose.LOGIN,
+            ttl_minutes=10
+        )
+        self.assertIsNotNone(challenge)
+        self.assertTrue(sent_ok)
+        self.assertEqual(challenge.target_email, 'counsel@siwoloadvocates.com')
+        self.assertEqual(challenge.attempts, 0)
+        self.assertIsNone(challenge.consumed_at)
+        self.assertTrue(challenge.is_valid)
+
+        # Verify with correct code
+        ok, msg = challenge.verify(code)
+        self.assertTrue(ok)
+        challenge.refresh_from_db()
+        self.assertTrue(challenge.is_consumed)
+        self.assertFalse(challenge.is_valid)
+
+    def test_challenge_five_wrong_attempts_locks(self):
+        challenge, code, _, _ = LoginChallenge.create_challenge(
+            user=self.user,
+            purpose=ChallengePurpose.LOGIN
+        )
+        for i in range(4):
+            ok, msg = challenge.verify('000000' if code != '000000' else '111111')
+            self.assertFalse(ok)
+            self.assertIn('remaining', msg)
+            challenge.refresh_from_db()
+            self.assertFalse(challenge.is_locked)
+
+        # 5th failed attempt locks challenge
+        ok, msg = challenge.verify('000000' if code != '000000' else '111111')
+        self.assertFalse(ok)
+        self.assertIn('locked', msg.lower())
+        challenge.refresh_from_db()
+        self.assertTrue(challenge.is_locked)
+        self.assertFalse(challenge.is_valid)
+
+        # Subsequent attempts remain locked
+        ok, msg = challenge.verify(code)
+        self.assertFalse(ok)
+        self.assertIn('locked', msg.lower())
+
+    def test_challenge_expiration(self):
+        challenge, code, _, _ = LoginChallenge.create_challenge(
+            user=self.user,
+            purpose=ChallengePurpose.LOGIN,
+            ttl_minutes=10
+        )
+        # Fast forward past expires_at
+        challenge.expires_at = timezone.now() - timedelta(minutes=1)
+        challenge.save(update_fields=['expires_at'])
+
+        self.assertTrue(challenge.is_expired)
+        ok, msg = challenge.verify(code)
+        self.assertFalse(ok)
+        self.assertIn('expired', msg.lower())
+
+    def test_challenge_cannot_reuse_consumed(self):
+        challenge, code, _, _ = LoginChallenge.create_challenge(
+            user=self.user,
+            purpose=ChallengePurpose.LOGIN
+        )
+        ok, _ = challenge.verify(code)
+        self.assertTrue(ok)
+
+        # Second attempt
+        ok, msg = challenge.verify(code)
+        self.assertFalse(ok)
+        self.assertIn('already been used', msg.lower())
+
+    def test_challenge_resend_cooldown_and_limit(self):
+        challenge, code, _, _ = LoginChallenge.create_challenge(
+            user=self.user,
+            purpose=ChallengePurpose.LOGIN
+        )
+        # Immediate resend fails due to 60s cooldown
+        ok, err, _ = challenge.resend()
+        self.assertFalse(ok)
+        self.assertIn('wait', err.lower())
+
+        # Backdate last_sent_at by 61 seconds
+        challenge.last_sent_at = timezone.now() - timedelta(seconds=61)
+        challenge.save(update_fields=['last_sent_at'])
+
+        ok, err, new_code = challenge.resend()
+        self.assertTrue(ok)
+        self.assertNotEqual(code, new_code)
+        self.assertEqual(challenge.sent_count, 2)
+
+        # Max 5 sends limit test
+        challenge.sent_count = 5
+        challenge.last_sent_at = timezone.now() - timedelta(seconds=61)
+        challenge.save(update_fields=['sent_count', 'last_sent_at'])
+        ok, err, _ = challenge.resend()
+        self.assertFalse(ok)
+        self.assertIn('maximum', err.lower())
+
+    def test_hourly_email_cap(self):
+        target = 'capped@siwoloadvocates.com'
+        # Create challenges totaling 10 sent emails in last hour
+        for _ in range(5):
+            LoginChallenge.objects.create(
+                target_email=target,
+                purpose=ChallengePurpose.LOGIN,
+                code_hash='fakehash',
+                expires_at=timezone.now() + timedelta(minutes=10),
+                sent_count=2,
+                last_sent_at=timezone.now()
+            )
+        self.assertFalse(check_hourly_email_limit(target))
+
+        challenge, _, sent_ok, msg = LoginChallenge.create_challenge(
+            target_email=target,
+            purpose=ChallengePurpose.LOGIN
+        )
+        self.assertIsNone(challenge)
+        self.assertFalse(sent_ok)
+        self.assertIn('limit reached', msg.lower())
+
 

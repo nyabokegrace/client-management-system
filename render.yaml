@@ -48,3 +48,26 @@ services:
       # ── Initial Admin Account ─────────────────────────────────────────────────
       - key: INITIAL_ADMIN_PASSWORD
         value: REPLACE_WITH_STRONG_INITIAL_ADMIN_PASSWORD
+
+      # ── Email & Two-Factor Authentication ────────────────────────────────────
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        value: info@siwoloadvocates.com
+      - key: EMAIL_TIMEOUT
+        value: "10"
+      - key: REQUIRE_2FA
+        value: "true"
+      - key: CHALLENGE_TTL_MINUTES
+        value: "10"
+      - key: SETUP_CODE
+        sync: false
+
