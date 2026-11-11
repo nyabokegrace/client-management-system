@@ -27,9 +27,10 @@ class Command(BaseCommand):
         admin_user = User.objects.filter(username='admin').first()
         if not admin_user:
             if not admin_password:
-                raise CommandError(
-                    'INITIAL_ADMIN_PASSWORD (or INITIAL_ADVOCATE_PASSWORD) environment variable is required to seed the administrator account.'
-                )
+                self.stdout.write(self.style.WARNING(
+                    'No INITIAL_ADMIN_PASSWORD provided. System is unseeded and ready for first-time sign up via web interface.'
+                ))
+                return
             admin_user = User.objects.create(
                 username='admin',
                 email=settings.FIRM_EMAIL,
