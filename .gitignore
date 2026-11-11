@@ -45,6 +45,7 @@ backend/storage/
 *.doc
 
 # IDE and OS
+*.tsbuildinfo
 .vscode/
 .idea/
 *.swp
