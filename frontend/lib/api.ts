@@ -72,7 +72,63 @@ class ApiClient {
   // Authentication
   auth = {
     getSetupStatus: async () => {
-      return this.request<{ has_users: boolean; firm_name: string }>('/auth/setup-status/');
+      return this.request<{
+        has_users: boolean;
+        needs_setup: boolean;
+        setup_required: boolean;
+        setup_enabled: boolean;
+        firm_name: string;
+      }>('/auth/setup-status/');
+    },
+    setup: async (data: { setup_code: string; name: string; email: string; password: string; username?: string }) => {
+      return this.request<{
+        message: string;
+        challenge_id: string;
+        target_email: string;
+        masked_email: string;
+        expires_in_seconds: number;
+      }>('/auth/setup/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    setupVerify: async (challenge_id: string, code: string) => {
+      const data = await this.request<{
+        message: string;
+        recovery_codes: string[];
+        token: string;
+        user: User;
+      }>('/auth/setup/verify/', {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id, code }),
+      });
+      if (data.token && data.user && typeof window !== 'undefined') {
+        localStorage.setItem('siwolo_token', data.token);
+        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
+      }
+      return data;
+    },
+    requestEmailChange: async (data: { current_password: string; new_email: string }) => {
+      return this.request<{
+        message: string;
+        challenge_id: string;
+        new_email: string;
+        masked_email: string;
+        expires_in_seconds: number;
+      }>('/auth/email-change/request/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    verifyEmailChange: async (challenge_id: string, code: string) => {
+      return this.request<{
+        message: string;
+        email: string;
+        user: User;
+      }>('/auth/email-change/verify/', {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id, code }),
+      });
     },
     signup: async (data: { name: string; username: string; password: string; email?: string }) => {
       return this.request<{

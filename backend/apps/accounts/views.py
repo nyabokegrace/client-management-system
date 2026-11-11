@@ -1,9 +1,13 @@
+import hmac
 from datetime import timedelta
 from django.utils import timezone
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email as django_validate_email
 from config.firm_settings import get_firm_details
 from rest_framework import generics, status, viewsets
 from rest_framework.response import Response
@@ -19,7 +23,13 @@ from .throttling import (
     ForgotPasswordRateThrottle,
     ResetPasswordRateThrottle,
 )
-from .emails import mask_email
+from .emails import (
+    mask_email,
+    generate_six_digit_code,
+    hash_code,
+    send_verification_email,
+    check_hourly_email_limit,
+)
 from .serializers import (
     UserSerializer,
     UserProfileUpdateSerializer,
@@ -65,17 +75,268 @@ class FirmSettingsView(APIView):
 class SetupStatusView(APIView):
     """
     Returns platform setup status (whether an active user account exists).
-    Used to guide first-time platform users to sign up.
+    Used to guide first-time platform users to set up the administrator account.
     """
     permission_classes = [AllowAny]
     throttle_classes = []
 
     def get(self, request):
-        has_users = User.objects.filter(is_active=True).exists()
+        has_users = User.objects.exists()
+        setup_code_set = bool(getattr(settings, 'SETUP_CODE', ''))
         return Response({
             'has_users': has_users,
+            'needs_setup': not has_users,
+            'setup_required': not has_users,
+            'setup_enabled': setup_code_set,
             'firm_name': getattr(settings, 'FIRM_NAME', 'Siwolo P.O Law Advocates'),
         }, status=status.HTTP_200_OK)
+
+
+class SetupView(APIView):
+    """
+    First-run administrator setup.
+    Works ONLY while there are zero users in the database; permanently refuses once an account exists.
+    Requires the SETUP_CODE environment variable's value, compared in constant time.
+    If SETUP_CODE is not configured, setup is disabled entirely.
+
+    Flow:
+    1. Initial POST: enters setup_code, name, email, password.
+       Sends a 6-digit setup code to the target email to prove it works and was typed correctly.
+    2. Verification: enters challenge_id and code.
+       Atomically creates the single administrator account and returns the 10 recovery codes shown once.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [LoginBurstRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+
+        # 1. Permanently refuse if any user already exists
+        if User.objects.exists():
+            return Response(
+                {'error': 'Setup is permanently closed. An administrator account already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # If challenge_id and code are supplied to POST /api/v1/auth/setup/, delegate to verification
+        if request.data.get('challenge_id') and (request.data.get('code') or request.data.get('verification_code')):
+            return SetupVerifyView().post(request)
+
+        # 2. Check SETUP_CODE environment variable
+        server_setup_code = getattr(settings, 'SETUP_CODE', None)
+        if not server_setup_code:
+            return Response(
+                {'error': 'First-run setup is disabled on this server. SETUP_CODE environment variable is not configured.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        setup_code = request.data.get('setup_code', '')
+        if not setup_code or not hmac.compare_digest(
+            str(setup_code).strip().encode('utf-8'),
+            str(server_setup_code).strip().encode('utf-8')
+        ):
+            log_activity(
+                actor=None,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_repr="Invalid setup code entered during first-run setup attempt",
+                ip_address=ip_addr
+            )
+            return Response(
+                {'error': 'Invalid setup code.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        name = (request.data.get('name') or request.data.get('full_name', '')).strip()
+        email = request.data.get('email', '').strip().lower()
+        password = request.data.get('password', '')
+        username = (request.data.get('username') or '').strip().lower()
+
+        if not name or not email or not password:
+            return Response(
+                {'error': 'name, email, and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            django_validate_email(email)
+        except ValidationError:
+            return Response({'error': 'Please enter a valid email address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate password using Django's validators
+        try:
+            validate_password(password)
+        except ValidationError as err:
+            return Response({'error': list(err.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not check_hourly_email_limit(email):
+            return Response(
+                {'error': 'Too many emails sent to this address recently. Please wait and try again.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        if not username:
+            username = email.split('@')[0].lower()
+            if not username or username in ['root', 'administrator']:
+                username = 'admin'
+
+        code = generate_six_digit_code()
+        code_h = hash_code(code)
+        ttl = int(getattr(settings, 'CHALLENGE_TTL_MINUTES', 10))
+        expires = timezone.now() + timedelta(minutes=ttl)
+
+        challenge = LoginChallenge.objects.create(
+            user=None,
+            purpose=ChallengePurpose.SETUP,
+            target_email=email,
+            code_hash=code_h,
+            expires_at=expires,
+            metadata={
+                'name': name,
+                'username': username,
+                'password_hash': make_password(password),
+            }
+        )
+
+        sent, send_err = send_verification_email(email, code, purpose=ChallengePurpose.SETUP, ttl_minutes=ttl)
+        if not sent:
+            return Response({'error': send_err}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        log_activity(
+            actor=None,
+            actor_name=name,
+            action=AuditAction.CODE_SENT,
+            module=AuditModule.AUTH,
+            target_id=str(challenge.id),
+            target_repr=f"Setup verification code emailed to {email}",
+            ip_address=ip_addr
+        )
+
+        return Response({
+            'message': 'Setup code verified. A 6-digit confirmation code has been emailed to your address.',
+            'challenge_id': str(challenge.id),
+            'target_email': email,
+            'masked_email': mask_email(email),
+            'expires_in_seconds': ttl * 60,
+        }, status=status.HTTP_200_OK)
+
+
+class SetupVerifyView(APIView):
+    """
+    Verifies the email code for first-run setup.
+    Guarantees atomic creation of exactly one administrator account and
+    generates 10 emergency recovery codes to be shown once.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [VerifyCodeRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+
+        if User.objects.exists():
+            return Response(
+                {'error': 'Setup is permanently closed. An administrator account already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        challenge_id = request.data.get('challenge_id')
+        code = (request.data.get('code') or request.data.get('verification_code', '')).strip()
+
+        if not challenge_id or not code:
+            return Response(
+                {'error': 'challenge_id and code are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            challenge = LoginChallenge.objects.get(id=challenge_id, purpose=ChallengePurpose.SETUP)
+        except (LoginChallenge.DoesNotExist, ValueError):
+            return Response({'error': 'Invalid setup challenge.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if challenge.is_consumed or challenge.is_expired or challenge.is_locked:
+            err = (
+                "This verification challenge has expired." if challenge.is_expired else
+                "This verification challenge has been locked due to too many failed attempts." if challenge.is_locked else
+                "This verification challenge has already been used."
+            )
+            return Response({'error': err, 'is_locked': challenge.is_locked, 'is_expired': challenge.is_expired}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err_msg = challenge.verify(code)
+        if not ok:
+            log_activity(
+                actor=None,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_id=str(challenge.id),
+                target_repr=f"Failed setup verification attempt ({challenge.attempts}/5)",
+                ip_address=ip_addr
+            )
+            return Response({'error': err_msg or 'Invalid verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Atomic transaction preventing simultaneous creation
+        with transaction.atomic():
+            if User.objects.select_for_update().exists():
+                return Response(
+                    {'error': 'Setup is permanently closed. An administrator account already exists.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            metadata = challenge.metadata or {}
+            full_name = metadata.get('name', 'Peter Siwolo').strip()
+            username = metadata.get('username') or 'admin'
+            password_hash = metadata.get('password_hash')
+
+            name_parts = full_name.split(maxsplit=1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+            user = User(
+                username=username,
+                email=challenge.target_email,
+                first_name=first_name,
+                last_name=last_name,
+                role=UserRole.ADMIN,
+                is_staff=True,
+                is_superuser=True,
+                is_active=True,
+            )
+            if password_hash:
+                user.password = password_hash
+            else:
+                user.set_unusable_password()
+            user.save()
+
+            recovery_codes = RecoveryCode.generate_codes_for_user(user, count=10)
+
+            challenge.user = user
+            challenge.consumed_at = timezone.now()
+            challenge.save(update_fields=['user', 'consumed_at'])
+
+            token, _ = Token.objects.get_or_create(user=user)
+
+            log_activity(
+                actor=user,
+                action=AuditAction.CODE_VERIFIED,
+                module=AuditModule.AUTH,
+                target_id=str(user.id),
+                target_repr=f"Email verified for first-run administrator account {user.username}",
+                ip_address=ip_addr
+            )
+            log_activity(
+                actor=user,
+                action=AuditAction.CREATE,
+                module=AuditModule.AUTH,
+                target_id=str(user.id),
+                target_repr=f"Administrator account created: {user.username} ({user.full_name})",
+                ip_address=ip_addr
+            )
+
+        return Response({
+            'message': 'Administrator account created successfully. Store your recovery codes in a secure location.',
+            'recovery_codes': recovery_codes,
+            'token': token.key,
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_201_CREATED)
 
 
 class SignUpView(APIView):
@@ -401,6 +662,174 @@ class ChangePasswordView(APIView):
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
         return Response({'message': 'Password updated successfully.'}, status=status.HTTP_200_OK)
+
+
+class RequestEmailChangeView(APIView):
+    """
+    Initiates changing the administrator email address in My Profile.
+    Requires current password confirmation.
+    Sends a verification code to the new email address before any change takes effect.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [LoginBurstRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        current_password = request.data.get('current_password') or request.data.get('password', '')
+        new_email = (request.data.get('new_email') or request.data.get('email', '')).strip().lower()
+
+        if not current_password or not new_email:
+            return Response(
+                {'error': 'current_password and new_email are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not request.user.check_password(current_password):
+            log_activity(
+                actor=request.user,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_repr="Password confirmation failed during email change request",
+                ip_address=ip_addr
+            )
+            return Response({'error': 'Incorrect current password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            django_validate_email(new_email)
+        except ValidationError:
+            return Response({'error': 'Please enter a valid email address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_email == request.user.email.strip().lower():
+            return Response({'error': 'The new email address must be different from your current email.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
+            return Response({'error': 'This email address is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not check_hourly_email_limit(new_email):
+            return Response({'error': 'Too many emails sent to this address recently. Please wait and try again.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        code = generate_six_digit_code()
+        ttl = int(getattr(settings, 'CHALLENGE_TTL_MINUTES', 10))
+        expires = timezone.now() + timedelta(minutes=ttl)
+
+        challenge = LoginChallenge.objects.create(
+            user=request.user,
+            purpose=ChallengePurpose.EMAIL_CHANGE,
+            target_email=new_email,
+            code_hash=hash_code(code),
+            expires_at=expires,
+            metadata={'new_email': new_email}
+        )
+
+        sent, send_err = send_verification_email(new_email, code, purpose=ChallengePurpose.EMAIL_CHANGE, ttl_minutes=ttl)
+        if not sent:
+            return Response({'error': send_err}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        log_activity(
+            actor=request.user,
+            action=AuditAction.CODE_SENT,
+            module=AuditModule.AUTH,
+            target_id=str(challenge.id),
+            target_repr=f"Email change verification code sent to {new_email}",
+            ip_address=ip_addr
+        )
+
+        return Response({
+            'message': f'Verification code sent to {new_email}.',
+            'challenge_id': str(challenge.id),
+            'new_email': new_email,
+            'masked_email': mask_email(new_email),
+            'expires_in_seconds': ttl * 60,
+        }, status=status.HTTP_200_OK)
+
+
+class VerifyEmailChangeView(APIView):
+    """
+    Verifies the email change code and updates user.email.
+    Until verified, user.email remains unchanged.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [VerifyCodeRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        challenge_id = request.data.get('challenge_id')
+        code = (request.data.get('code') or request.data.get('verification_code', '')).strip()
+
+        if not challenge_id or not code:
+            return Response(
+                {'error': 'challenge_id and code are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            challenge = LoginChallenge.objects.get(
+                id=challenge_id,
+                user=request.user,
+                purpose=ChallengePurpose.EMAIL_CHANGE
+            )
+        except (LoginChallenge.DoesNotExist, ValueError):
+            return Response({'error': 'Invalid email change challenge.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if challenge.is_consumed or challenge.is_expired or challenge.is_locked:
+            err = (
+                "This verification challenge has expired." if challenge.is_expired else
+                "This verification challenge has been locked due to too many failed attempts." if challenge.is_locked else
+                "This verification challenge has already been used."
+            )
+            return Response({'error': err, 'is_locked': challenge.is_locked, 'is_expired': challenge.is_expired}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err_msg = challenge.verify(code)
+        if not ok:
+            log_activity(
+                actor=request.user,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_id=str(challenge.id),
+                target_repr=f"Failed email change verification attempt ({challenge.attempts}/5)",
+                ip_address=ip_addr
+            )
+            return Response({'error': err_msg or 'Invalid verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_email = challenge.target_email
+        if User.objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
+            return Response({'error': 'This email address is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_email = request.user.email
+        request.user.email = new_email
+        request.user.save(update_fields=['email', 'updated_at'])
+
+        challenge.consumed_at = timezone.now()
+        challenge.save(update_fields=['consumed_at'])
+
+        log_activity(
+            actor=request.user,
+            action=AuditAction.CODE_VERIFIED,
+            module=AuditModule.AUTH,
+            target_id=str(request.user.id),
+            target_repr=f"Email address successfully changed from {old_email} to {new_email}",
+            ip_address=ip_addr
+        )
+
+        return Response({
+            'message': 'Email address successfully updated.',
+            'email': request.user.email,
+            'user': UserSerializer(request.user).data
+        }, status=status.HTTP_200_OK)
+
+
+class EmailChangeView(APIView):
+    """
+    Unified endpoint for email change:
+    - Without code: requests verification code for new email.
+    - With code: verifies code and updates email address.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.data.get('code') or request.data.get('verification_code'):
+            return VerifyEmailChangeView().post(request)
+        return RequestEmailChangeView().post(request)
 
 
 class VerifyRecoveryCodeView(APIView):

@@ -1,7 +1,7 @@
 import os
 from datetime import timedelta
 from unittest.mock import patch
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.core.cache import cache
 from django.core.management import call_command
@@ -90,7 +90,8 @@ class AccountsAuthenticationTests(TestCase):
         self.assertEqual(self.admin_user.first_name, 'Peter O.')
         self.assertEqual(self.admin_user.last_name, 'Siwolo')
         self.assertEqual(self.admin_user.phone_number, '+254792300520')
-        self.assertEqual(self.admin_user.email, 'info@siwoloadvocates.com')
+        # Email cannot be changed via unverified profile patch (Stage D requirement)
+        self.assertEqual(self.admin_user.email, 'admin@siwoloadvocates.com')
 
     def test_change_password(self):
         self.client.force_authenticate(user=self.admin_user)
@@ -826,6 +827,427 @@ class StageCRecoveryCodesAndForgotPasswordTests(TestCase):
         }, format='json')
         self.assertEqual(res_weak_pw.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('error', res_weak_pw.data)
+
+
+class StageDFirstRunSetupAndEmailChangeTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        mail.outbox.clear()
+        self.client = APIClient()
+
+    def tearDown(self):
+        cache.clear()
+        mail.outbox.clear()
+
+    @override_settings(SETUP_CODE='siwolo-firm-setup-secret-code-2026')
+    def test_setup_status_endpoint(self):
+        # 1. Zero users: setup is needed
+        User.objects.all().delete()
+        res_empty = self.client.get(reverse('auth-setup-status'))
+        self.assertEqual(res_empty.status_code, status.HTTP_200_OK)
+        self.assertTrue(res_empty.data['needs_setup'])
+        self.assertFalse(res_empty.data['has_users'])
+        self.assertTrue(res_empty.data['setup_enabled'])
+
+        # 2. When user exists: setup is not needed
+        User.objects.create_user(
+            username='counsel',
+            email='counsel@siwoloadvocates.com',
+            password='TestPassword123!',
+            role=UserRole.ADMIN
+        )
+        res_has_user = self.client.get(reverse('auth-setup-status'))
+        self.assertEqual(res_has_user.status_code, status.HTTP_200_OK)
+        self.assertFalse(res_has_user.data['needs_setup'])
+        self.assertTrue(res_has_user.data['has_users'])
+
+    @override_settings(SETUP_CODE='siwolo-firm-setup-secret-code-2026')
+    def test_setup_refused_when_user_exists(self):
+        User.objects.create_user(
+            username='counsel',
+            email='counsel@siwoloadvocates.com',
+            password='TestPassword123!',
+            role=UserRole.ADMIN
+        )
+        res = self.client.post(reverse('auth-setup'), {
+            'setup_code': 'siwolo-firm-setup-secret-code-2026',
+            'name': 'Peter Siwolo',
+            'email': 'peter@siwoloadvocates.com',
+            'password': 'BrandNewPassword123!'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('permanently closed', res.data['error'])
+
+    @override_settings(SETUP_CODE=None)
+    def test_setup_disabled_when_setup_code_not_set(self):
+        User.objects.all().delete()
+        res = self.client.post(reverse('auth-setup'), {
+            'setup_code': 'some-guess',
+            'name': 'Peter Siwolo',
+            'email': 'peter@siwoloadvocates.com',
+            'password': 'BrandNewPassword123!'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('disabled', res.data['error'])
+
+    @override_settings(SETUP_CODE='siwolo-firm-setup-secret-code-2026')
+    def test_setup_wrong_code(self):
+        User.objects.all().delete()
+        res = self.client.post(reverse('auth-setup'), {
+            'setup_code': 'incorrect-code-attempt',
+            'name': 'Peter Siwolo',
+            'email': 'peter@siwoloadvocates.com',
+            'password': 'BrandNewPassword123!'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid setup code', res.data['error'])
+
+    @override_settings(SETUP_CODE='siwolo-firm-setup-secret-code-2026')
+    def test_setup_happy_path_email_verification_and_recovery_codes(self):
+        User.objects.all().delete()
+        setup_url = reverse('auth-setup')
+
+        # 1. Initiate setup
+        res_init = self.client.post(setup_url, {
+            'setup_code': 'siwolo-firm-setup-secret-code-2026',
+            'name': 'Peter O. Siwolo',
+            'email': 'counsel@siwoloadvocates.com',
+            'password': 'MasterAdvocatePassword2026!',
+            'username': 'siwolo_counsel'
+        }, format='json')
+
+        self.assertEqual(res_init.status_code, status.HTTP_200_OK)
+        self.assertIn('challenge_id', res_init.data)
+        challenge_id = res_init.data['challenge_id']
+
+        # Confirm user is not created yet!
+        self.assertEqual(User.objects.count(), 0)
+
+        # Confirm email was dispatched
+        self.assertEqual(len(mail.outbox), 1)
+        import re
+        code_match = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body)
+        self.assertIsNotNone(code_match)
+        code = code_match.group(1)
+
+        # 2. Verify setup code
+        verify_url = reverse('auth-setup-verify')
+        res_verify = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': code
+        }, format='json')
+
+        self.assertEqual(res_verify.status_code, status.HTTP_201_CREATED)
+        self.assertIn('recovery_codes', res_verify.data)
+        self.assertEqual(len(res_verify.data['recovery_codes']), 10)
+        self.assertIn('token', res_verify.data)
+
+        # Confirm exactly one administrator account created
+        self.assertEqual(User.objects.count(), 1)
+        created_user = User.objects.get(username='siwolo_counsel')
+        self.assertEqual(created_user.role, UserRole.ADMIN)
+        self.assertTrue(created_user.is_staff)
+        self.assertTrue(created_user.is_superuser)
+        self.assertTrue(created_user.check_password('MasterAdvocatePassword2026!'))
+        self.assertEqual(created_user.first_name, 'Peter')
+        self.assertEqual(created_user.last_name, 'O. Siwolo')
+
+        # Confirm 10 recovery codes created in DB
+        self.assertEqual(RecoveryCode.objects.filter(user=created_user, consumed_at__isnull=True).count(), 10)
+
+        # Confirm subsequent setup calls are permanently refused
+        res_subsequent = self.client.post(setup_url, {
+            'setup_code': 'siwolo-firm-setup-secret-code-2026',
+            'name': 'Attacker',
+            'email': 'attacker@example.com',
+            'password': 'AttackPassword123!'
+        }, format='json')
+        self.assertEqual(res_subsequent.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('permanently closed', res_subsequent.data['error'])
+
+    def test_email_change_does_nothing_until_verified(self):
+        user = User.objects.create_user(
+            username='siwolo_counsel',
+            email='old_address@siwoloadvocates.com',
+            password='MyCurrentPassword123!',
+            role=UserRole.ADMIN
+        )
+        token = Token.objects.create(user=user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+
+        # Direct PATCH /auth/me/ with email does not change user.email
+        me_url = reverse('auth-me')
+        patch_res = self.client.patch(me_url, {
+            'first_name': 'Peter',
+            'email': 'unverified_new_address@siwoloadvocates.com'
+        }, format='json')
+        self.assertEqual(patch_res.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.email, 'old_address@siwoloadvocates.com')
+
+        # Request email change: wrong current password rejected
+        req_url = reverse('auth-email-change-request')
+        wrong_pw_res = self.client.post(req_url, {
+            'current_password': 'IncorrectPassword999!',
+            'new_email': 'verified_new@siwoloadvocates.com'
+        }, format='json')
+        self.assertEqual(wrong_pw_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Incorrect current password', wrong_pw_res.data['error'])
+
+        # Request email change: correct password succeeds and sends code
+        mail.outbox.clear()
+        req_res = self.client.post(req_url, {
+            'current_password': 'MyCurrentPassword123!',
+            'new_email': 'verified_new@siwoloadvocates.com'
+        }, format='json')
+        self.assertEqual(req_res.status_code, status.HTTP_200_OK)
+        self.assertIn('challenge_id', req_res.data)
+        challenge_id = req_res.data['challenge_id']
+
+        # Confirm email has not changed yet!
+        user.refresh_from_db()
+        self.assertEqual(user.email, 'old_address@siwoloadvocates.com')
+
+        # Verify email was sent to the NEW address
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['verified_new@siwoloadvocates.com'])
+
+        import re
+        code_match = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body)
+        self.assertIsNotNone(code_match)
+        email_code = code_match.group(1)
+
+        # Wrong code verification fails
+        verify_url = reverse('auth-email-change-verify')
+        wrong_code_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': '999999'
+        }, format='json')
+        self.assertEqual(wrong_code_res.status_code, status.HTTP_400_BAD_REQUEST)
+        user.refresh_from_db()
+        self.assertEqual(user.email, 'old_address@siwoloadvocates.com')
+
+        # Correct code verification changes email
+        verify_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': email_code
+        }, format='json')
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+
+        user.refresh_from_db()
+        self.assertEqual(user.email, 'verified_new@siwoloadvocates.com')
+
+
+class StageEFinalChecksTests(TestCase):
+    """
+    Stage E: Comprehensive end-to-end verification of all authentication mechanisms.
+    """
+    def setUp(self):
+        cache.clear()
+        mail.outbox.clear()
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='siwolo_counsel',
+            email='counsel@siwoloadvocates.com',
+            password='InitialMasterPassword123!',
+            first_name='Peter',
+            last_name='Siwolo',
+            role=UserRole.ADMIN
+        )
+
+    def tearDown(self):
+        cache.clear()
+        mail.outbox.clear()
+
+    def test_full_happy_path_login_code_token(self):
+        # 1. Login with credentials
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        self.assertEqual(login_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(login_res.data.get('requires_2fa'))
+        self.assertNotIn('token', login_res.data)
+        challenge_id = login_res.data['challenge_id']
+
+        # 2. Extract code
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+
+        # 3. Verify code
+        verify_res = self.client.post(reverse('auth-verify-code'), {
+            'challenge_id': challenge_id,
+            'code': code
+        }, format='json')
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+        self.assertIn('token', verify_res.data)
+
+        # 4. Access protected endpoint with token
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {verify_res.data['token']}")
+        me_res = self.client.get(reverse('auth-me'))
+        self.assertEqual(me_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_res.data['username'], 'siwolo_counsel')
+
+    def test_wrong_code_and_expired_code(self):
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        # Wrong code
+        wrong_res = self.client.post(reverse('auth-verify-code'), {
+            'challenge_id': challenge_id,
+            'code': '000000'
+        }, format='json')
+        self.assertEqual(wrong_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Expired challenge
+        challenge = LoginChallenge.objects.get(id=challenge_id)
+        challenge.expires_at = timezone.now() - timedelta(minutes=1)
+        challenge.save(update_fields=['expires_at'])
+
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+        exp_res = self.client.post(reverse('auth-verify-code'), {
+            'challenge_id': challenge_id,
+            'code': code
+        }, format='json')
+        self.assertEqual(exp_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('expired', exp_res.data['error'].lower())
+
+    def test_five_wrong_attempts_locks_challenge(self):
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        for i in range(4):
+            res = self.client.post(reverse('auth-verify-code'), {'challenge_id': challenge_id, 'code': '000000'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5th attempt locks challenge
+        res5 = self.client.post(reverse('auth-verify-code'), {'challenge_id': challenge_id, 'code': '000000'}, format='json')
+        self.assertEqual(res5.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(res5.data.get('is_locked'))
+
+        # Even correct code fails once locked
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+        locked_res = self.client.post(reverse('auth-verify-code'), {'challenge_id': challenge_id, 'code': code}, format='json')
+        self.assertEqual(locked_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(locked_res.data.get('is_locked'))
+
+    def test_replayed_code_fails(self):
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+
+        # First verify succeeds
+        ok_res = self.client.post(reverse('auth-verify-code'), {'challenge_id': challenge_id, 'code': code}, format='json')
+        self.assertEqual(ok_res.status_code, status.HTTP_200_OK)
+
+        # Replay fails
+        replay_res = self.client.post(reverse('auth-verify-code'), {'challenge_id': challenge_id, 'code': code}, format='json')
+        self.assertEqual(replay_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resend_inside_cooldown_refused(self):
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        # Immediate resend (within 60s cooldown)
+        resend_res = self.client.post(reverse('auth-resend-code'), {'challenge_id': challenge_id}, format='json')
+        self.assertEqual(resend_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('cooldown', resend_res.data['error'].lower())
+
+    def test_token_never_issued_without_code(self):
+        # 1. Login with credentials alone never returns a token when 2FA is required
+        res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertNotIn('token', res.data)
+
+        # 2. Reset password never returns a token
+        mail.outbox.clear()
+        self.client.post(reverse('auth-forgot-password'), {'identifier': 'siwolo_counsel'}, format='json')
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+        reset_res = self.client.post(reverse('auth-reset-password'), {
+            'identifier': 'siwolo_counsel',
+            'code': code,
+            'new_password': 'BrandNewPassword2026!'
+        }, format='json')
+        self.assertEqual(reset_res.status_code, status.HTTP_200_OK)
+        self.assertNotIn('token', reset_res.data)
+
+    def test_recovery_code_single_use(self):
+        codes = RecoveryCode.generate_codes_for_user(self.user, count=10)
+        code = codes[0]
+
+        login_res = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        # 1. First use succeeds
+        use_res = self.client.post(reverse('auth-verify-recovery-code'), {
+            'challenge_id': challenge_id,
+            'recovery_code': code
+        }, format='json')
+        self.assertEqual(use_res.status_code, status.HTTP_200_OK)
+        self.assertIn('token', use_res.data)
+
+        # 2. Second login attempt with same recovery code fails
+        login_res2 = self.client.post(reverse('auth-login'), {
+            'username': 'siwolo_counsel',
+            'password': 'InitialMasterPassword123!'
+        }, format='json')
+        challenge_id2 = login_res2.data['challenge_id']
+
+        use_res2 = self.client.post(reverse('auth-verify-recovery-code'), {
+            'challenge_id': challenge_id2,
+            'recovery_code': code
+        }, format='json')
+        self.assertEqual(use_res2.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_forgot_password_identical_responses(self):
+        res_existing = self.client.post(reverse('auth-forgot-password'), {'identifier': 'siwolo_counsel'}, format='json')
+        res_unknown = self.client.post(reverse('auth-forgot-password'), {'identifier': 'nonexistent_user'}, format='json')
+
+        self.assertEqual(res_existing.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_unknown.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_existing.data['message'], res_unknown.data['message'])
+
+    def test_reset_password_ends_old_sessions(self):
+        # Create active session token
+        t1 = Token.objects.create(user=self.user)
+
+        mail.outbox.clear()
+        self.client.post(reverse('auth-forgot-password'), {'identifier': 'siwolo_counsel'}, format='json')
+        import re
+        code = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body).group(1)
+
+        self.client.post(reverse('auth-reset-password'), {
+            'identifier': 'siwolo_counsel',
+            'code': code,
+            'new_password': 'BrandNewPassword2026!'
+        }, format='json')
+
+        # Token must be deleted
+        self.assertFalse(Token.objects.filter(key=t1.key).exists())
+        self.assertEqual(Token.objects.filter(user=self.user).count(), 0)
 
 
 

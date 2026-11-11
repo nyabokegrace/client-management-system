@@ -13,21 +13,22 @@ import {
   UserCheck,
   KeyRound,
   CheckCircle2,
-  UserPlus,
   Sparkles,
   ShieldCheck,
   Clock,
   RotateCw,
   ArrowLeft,
   Mail,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
 
-  // Mode: 'login' | 'signup' | 'forgot'
-  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
+  // Mode: 'login' | 'forgot'
+  const [mode, setMode] = useState<'login' | 'forgot'>('login');
   const [isFirstTime, setIsFirstTime] = useState(false);
 
   // Sign In: Step 1 (Credentials) vs Step 2 (2FA Code)
@@ -47,7 +48,6 @@ export default function LoginPage() {
   // Step 2: Recovery Code toggle
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
-  const [recoveryWarning, setRecoveryWarning] = useState<string | null>(null);
 
   // Forgot Password State
   const [forgotStep, setForgotStep] = useState<1 | 2>(1);
@@ -58,13 +58,21 @@ export default function LoginPage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
-  // Sign Up state
-  const [signupName, setSignupName] = useState('');
-  const [signupUsername, setSignupUsername] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false);
+  // First-Run Setup State (Stage D)
+  const [setupStep, setSetupStep] = useState<1 | 2 | 3>(1);
+  const [setupCode, setSetupCode] = useState('');
+  const [setupName, setSetupName] = useState('');
+  const [setupUsername, setSetupUsername] = useState('admin');
+  const [setupEmail, setSetupEmail] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
+  const [setupChallengeId, setSetupChallengeId] = useState('');
+  const [setupVerificationCode, setSetupVerificationCode] = useState('');
+  const [setupMaskedEmail, setSetupMaskedEmail] = useState('');
+  const [setupRecoveryCodes, setSetupRecoveryCodes] = useState<string[]>([]);
+  const [copiedSetupCodes, setCopiedSetupCodes] = useState(false);
 
   // UI status
   const [loading, setLoading] = useState(false);
@@ -78,18 +86,16 @@ export default function LoginPage() {
         router.push('/');
         return;
       }
-      if (window.location.search.includes('mode=signup')) {
-        setMode('signup');
-      }
     }
 
-    // Check if platform has any users configured
+    // Check whether database has zero users (requires first-run setup)
     api.auth
       .getSetupStatus()
       .then((status) => {
-        if (!status.has_users) {
+        if (!status.has_users || status.needs_setup) {
           setIsFirstTime(true);
-          setMode('signup');
+        } else {
+          setIsFirstTime(false);
         }
       })
       .catch(() => {
@@ -97,9 +103,9 @@ export default function LoginPage() {
       });
   }, [router]);
 
-  // Tick countdown timer for 2FA code and resend cooldown
+  // Tick countdown timer for 2FA code and resend cooldown (login and setup)
   useEffect(() => {
-    if (loginStep !== 2) return;
+    if (loginStep !== 2 && setupStep !== 2) return;
 
     const timer = setInterval(() => {
       setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
@@ -107,7 +113,7 @@ export default function LoginPage() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [loginStep]);
+  }, [loginStep, setupStep]);
 
   // Format seconds as MM:SS
   const formatTime = (secs: number) => {
@@ -134,7 +140,6 @@ export default function LoginPage() {
         setIsLocked(false);
         setLoginStep(2);
       } else {
-        // Fallback if 2FA is disabled on server
         router.push('/');
       }
     } catch (err: unknown) {
@@ -311,73 +316,103 @@ export default function LoginPage() {
     setSuccess(null);
   };
 
-  // Handle Sign Up
-  const handleSignupSubmit = async (e: React.FormEvent) => {
+  // Handle First-Run Setup: Step 1 (Validate setup code & send email code)
+  const handleSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    if (!signupName.trim()) {
-      setError('Please provide your full legal name.');
+    if (!setupCode.trim()) {
+      setError('Please enter the server SETUP_CODE.');
       return;
     }
-
-    if (!signupUsername.trim()) {
-      setError('Please choose a username.');
+    if (!setupName.trim()) {
+      setError('Please enter your full name.');
       return;
     }
-
-    if (signupPassword.length < 8) {
+    if (!setupEmail.trim()) {
+      setError('Please enter your administrator email address.');
+      return;
+    }
+    if (setupPassword.length < 8) {
       setError('Password must be at least 8 characters long.');
       return;
     }
-
-    if (signupPassword !== signupConfirmPassword) {
+    if (setupPassword !== setupConfirmPassword) {
       setError('Passwords do not match. Please verify and try again.');
       return;
     }
 
     setLoading(true);
-
     try {
-      const res = await api.auth.signup({
-        name: signupName.trim(),
-        username: signupUsername.trim(),
-        password: signupPassword,
+      const res = await api.auth.setup({
+        setup_code: setupCode.trim(),
+        name: setupName.trim(),
+        username: setupUsername.trim() || 'admin',
+        email: setupEmail.trim(),
+        password: setupPassword,
       });
-
-      setUsername(signupUsername.trim());
-      setPassword(signupPassword);
-
-      setSignupName('');
-      setSignupUsername('');
-      setSignupPassword('');
-      setSignupConfirmPassword('');
-      setIsFirstTime(false);
-
-      setMode('login');
-      setLoginStep(1);
-      setSuccess(
-        `Account created successfully for ${res.full_name || 'you'}! Please sign in below using your username and password.`
-      );
+      setSetupChallengeId(res.challenge_id);
+      setSetupMaskedEmail(res.masked_email || res.target_email);
+      setCountdown(res.expires_in_seconds || 600);
+      setResendCooldown(60);
+      setSetupStep(2);
+      setSuccess('Setup code verified! A 6-digit confirmation code has been emailed to you.');
     } catch (err: unknown) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Account creation failed. Please check your details and try again.'
-      );
+      setError(err instanceof Error ? err.message : 'Setup failed. Please check your setup code.');
     } finally {
       setLoading(false);
     }
   };
 
-  const switchMode = (newMode: 'login' | 'signup' | 'forgot') => {
-    setMode(newMode);
-    setLoginStep(1);
-    setForgotStep(1);
-    setUseRecoveryCode(false);
+  // Handle First-Run Setup: Step 2 (Verify emailed code & generate recovery codes)
+  const handleSetupVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
     setSuccess(null);
+
+    if (setupVerificationCode.trim().length !== 6) {
+      setError('Please enter the 6-digit code sent to your email.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.auth.setupVerify(setupChallengeId, setupVerificationCode.trim());
+      setSetupRecoveryCodes(res.recovery_codes || []);
+      setSetupStep(3);
+      setSuccess('Administrator account created successfully! Save your recovery codes below.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invalid or expired verification code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle First-Run Setup: Step 2 Resend code
+  const handleSetupResendCode = async () => {
+    if (resendCooldown > 0 || !setupChallengeId) return;
+    setError(null);
+    try {
+      const res = await api.auth.resendCode(setupChallengeId);
+      setCountdown(res.expires_in_seconds);
+      setResendCooldown(res.seconds_until_resend || 60);
+      setSuccess('A new verification code has been emailed to you.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not resend code. Please wait.');
+    }
+  };
+
+  const handleCopySetupCodes = () => {
+    if (setupRecoveryCodes.length > 0) {
+      navigator.clipboard.writeText(setupRecoveryCodes.join('\n'));
+      setCopiedSetupCodes(true);
+      setTimeout(() => setCopiedSetupCodes(false), 3000);
+    }
+  };
+
+  const handleFinishSetup = () => {
+    router.push('/');
   };
 
   return (
@@ -396,58 +431,12 @@ export default function LoginPage() {
             />
           </div>
           <h1 className="text-xl font-bold tracking-tight text-[#111111]">
-            Siwolo P.O Law Advocates
+            {isFirstTime ? 'Set up your account' : 'Siwolo P.O Law Advocates'}
           </h1>
           <p className="text-xs text-[#6B7280] mt-1 uppercase tracking-wider font-medium">
-            Client & Case Management System
+            {isFirstTime ? 'Initial Administrator Setup' : 'Client & Case Management System'}
           </p>
         </div>
-
-        {/* First-Time Welcome Banner */}
-        {isFirstTime && mode === 'signup' && (
-          <div className="mb-6 p-3 bg-blue-50 border border-blue-200 rounded flex items-start text-xs text-blue-800">
-            <Sparkles className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5 text-blue-600" />
-            <div>
-              <p className="font-semibold">Welcome to your new CMS platform</p>
-              <p className="text-blue-700 mt-0.5">
-                Complete your initial first-time registration below to create your administrator account.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Tab Switcher (Visible in Step 1) */}
-        {loginStep === 1 && (
-          <div className="flex border-b border-[#E5E7EB] mb-6">
-            <button
-              type="button"
-              onClick={() => switchMode('login')}
-              className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
-                mode === 'login'
-                  ? 'border-black text-[#111111]'
-                  : 'border-transparent text-[#6B7280] hover:text-[#111111]'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode('signup')}
-              className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 flex items-center justify-center space-x-1.5 ${
-                mode === 'signup'
-                  ? 'border-black text-[#111111]'
-                  : 'border-transparent text-[#6B7280] hover:text-[#111111]'
-              }`}
-            >
-              <span>Sign Up</span>
-              {isFirstTime && (
-                <span className="bg-black text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                  NEW
-                </span>
-              )}
-            </button>
-          </div>
-        )}
 
         {/* Success Alert */}
         {success && (
@@ -466,286 +455,523 @@ export default function LoginPage() {
         )}
 
         {/* ================================================================= */}
-        {/* SIGN IN: STEP 1 (Username & Password) */}
+        {/* FIRST-RUN SETUP (Shown ONLY when zero users exist in the database) */}
+        {/* Normal login form is completely hidden */}
         {/* ================================================================= */}
-        {mode === 'login' && loginStep === 1 && (
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
-                Username
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter your username"
-                  autoComplete="username"
-                  className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-              </div>
-            </div>
+        {isFirstTime ? (
+          <div>
+            {setupStep === 1 && (
+              <form onSubmit={handleSetupSubmit} className="space-y-4">
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded text-xs text-blue-900 mb-2">
+                  <p className="font-semibold flex items-center">
+                    <Sparkles className="w-4 h-4 mr-1 text-blue-600" />
+                    First-Time Platform Initialization
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-blue-700">
+                    To establish the master advocate account, provide the server SETUP_CODE secret and your administrator details.
+                  </p>
+                </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider">
-                  Password
-                </label>
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Server Setup Authorization Code *
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type="password"
+                      required
+                      autoFocus
+                      value={setupCode}
+                      onChange={(e) => setSetupCode(e.target.value)}
+                      placeholder="Enter SETUP_CODE environment secret"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Full Legal Name *
+                  </label>
+                  <div className="relative">
+                    <UserCheck className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={setupName}
+                      onChange={(e) => setSetupName(e.target.value)}
+                      placeholder="Peter O. Siwolo"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Administrator Email (2FA Destination) *
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      required
+                      value={setupEmail}
+                      onChange={(e) => setSetupEmail(e.target.value)}
+                      placeholder="counsel@siwoloadvocates.com"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Username
+                  </label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={setupUsername}
+                      onChange={(e) => setSetupUsername(e.target.value)}
+                      placeholder="admin"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Chosen Password (Min 8 characters) *
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type={showSetupPassword ? 'text' : 'password'}
+                      required
+                      minLength={8}
+                      value={setupPassword}
+                      onChange={(e) => setSetupPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSetupPassword((v) => !v)}
+                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Confirm Password *
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type={showSetupConfirmPassword ? 'text' : 'password'}
+                      required
+                      minLength={8}
+                      value={setupConfirmPassword}
+                      onChange={(e) => setSetupConfirmPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSetupConfirmPassword((v) => !v)}
+                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showSetupConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                >
+                  {loading ? (
+                    'Validating...'
+                  ) : (
+                    <>
+                      Send Email Verification Code
+                      <ArrowRight className="w-3.5 h-3.5 ml-2" />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {setupStep === 2 && (
+              <form onSubmit={handleSetupVerifySubmit} className="space-y-4">
+                <div className="text-center mb-4">
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-full mb-3 text-black">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-[#111111] uppercase tracking-wider">
+                    Confirm Your Email
+                  </h3>
+                  <p className="text-xs text-[#6B7280] mt-1">
+                    A 6-digit setup code was sent to <strong>{setupMaskedEmail || setupEmail}</strong> to prove delivery.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-2 text-center">
+                    6-Digit Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={setupVerificationCode}
+                    onChange={(e) => setSetupVerificationCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    className="w-full py-2.5 px-4 text-center text-2xl font-mono tracking-widest bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-[#6B7280]">
+                  <span className="flex items-center">
+                    <Clock className="w-3.5 h-3.5 mr-1" />
+                    Expires: {formatTime(countdown)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSetupResendCode}
+                    disabled={resendCooldown > 0 || loading}
+                    className="text-xs text-black font-semibold hover:underline disabled:opacity-40 flex items-center"
+                  >
+                    <RotateCw className="w-3 h-3 mr-1" />
+                    {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || setupVerificationCode.length !== 6}
+                  className="w-full py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Creating Account...' : 'Verify Code & Finalize Account'}
+                </button>
+
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setSetupStep(1)}
+                    className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                    Back to Account Details
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {setupStep === 3 && (
+              <div className="space-y-4">
+                <div className="text-center mb-2">
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-emerald-100 rounded-full mb-3 text-emerald-800">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
+                    Administrator Account Created
+                  </h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Your single master account is initialized. Save your emergency recovery codes below.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                      Emergency Recovery Codes
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopySetupCodes}
+                      className="inline-flex items-center text-xs font-semibold text-black hover:underline"
+                    >
+                      {copiedSetupCodes ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 mr-1" />
+                          Copy All
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center mb-2">
+                    {setupRecoveryCodes.map((code, idx) => (
+                      <div
+                        key={idx}
+                        className="py-1 px-2 bg-white border border-amber-300 rounded font-mono text-xs font-bold text-gray-900 tracking-wider shadow-2xs"
+                      >
+                        {code}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    ⚠️ <strong>Important:</strong> These 10 single-use codes are shown only once. Store them in your password manager now.
+                  </p>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => {
-                    setMode('forgot');
-                    setForgotStep(1);
-                    setForgotIdentifier(username || '');
-                    setError(null);
-                    setSuccess(null);
-                  }}
-                  className="text-[11px] text-[#4B5563] hover:text-black hover:underline transition-colors"
+                  onClick={handleFinishSetup}
+                  className="w-full py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors"
                 >
-                  Forgot password?
-                </button>
-              </div>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                'Authenticating...'
-              ) : (
-                <>
-                  Continue
+                  I Have Saved My Recovery Codes — Go to Dashboard
                   <ArrowRight className="w-3.5 h-3.5 ml-2" />
-                </>
-              )}
-            </button>
-
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => switchMode('signup')}
-                className="text-xs text-[#374151] hover:text-black underline underline-offset-2 transition-colors"
-              >
-                First time here? Sign up to create an account
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* ================================================================= */}
-        {/* SIGN IN: STEP 2 (Two-Factor 6-Digit Code OR Recovery Code) */}
-        {/* ================================================================= */}
-        {mode === 'login' && loginStep === 2 && !useRecoveryCode && (
-          <form onSubmit={handleVerifyCodeSubmit} className="space-y-4">
-            <div className="text-center mb-4">
-              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-black mb-2">
-                <ShieldCheck className="w-5 h-5 text-black" />
+                </button>
               </div>
-              <h2 className="text-sm font-bold text-[#111111]">Two-Factor Verification</h2>
-              <div className="flex items-center justify-center text-xs text-[#6B7280] mt-1 space-x-1">
-                <Mail className="w-3.5 h-3.5 text-gray-400" />
-                <span>Code sent to:</span>
-                <span className="font-semibold text-gray-800">{maskedEmail}</span>
-              </div>
-            </div>
+            )}
+          </div>
+        ) : (
+          /* =============================================================== */
+          /* NORMAL FORM (Visible ONLY when account already exists)          */
+          /* =============================================================== */
+          <div>
+            {mode === 'login' && loginStep === 1 && (
+              <form onSubmit={handleLoginSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
+                    Username
+                  </label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="Enter your username"
+                      autoComplete="username"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1 text-center">
-                6-Digit Security Code
-              </label>
-              <input
-                type="text"
-                required
-                autoFocus
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={verificationCode}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/\D/g, '');
-                  setVerificationCode(val);
-                }}
-                placeholder="000000"
-                className="w-full py-2.5 px-4 text-center text-2xl font-mono tracking-widest bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-              />
-            </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider">
+                      Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('forgot');
+                        setForgotStep(1);
+                        setForgotIdentifier(username || '');
+                        setError(null);
+                        setSuccess(null);
+                      }}
+                      className="text-[11px] text-[#4B5563] hover:text-black hover:underline transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                      className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                      tabIndex={-1}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
 
-            {/* Countdown timer */}
-            <div className="flex items-center justify-between text-xs text-[#6B7280]">
-              <div className="flex items-center space-x-1">
-                <Clock className="w-3.5 h-3.5" />
-                {countdown > 0 ? (
-                  <span>Expires in: <strong className="text-gray-900">{formatTime(countdown)}</strong></span>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                >
+                  {loading ? (
+                    'Signing In...'
+                  ) : (
+                    <>
+                      Sign In
+                      <ArrowRight className="w-3.5 h-3.5 ml-2" />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {mode === 'login' && loginStep === 2 && (
+              <div className="space-y-4">
+                <div className="text-center mb-4">
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-full mb-3 text-black">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <h2 className="text-sm font-bold text-[#111111] uppercase tracking-wider">
+                    Two-Factor Authentication
+                  </h2>
+                  <p className="text-xs text-[#6B7280] mt-1">
+                    {useRecoveryCode ? (
+                      'Enter one of your 10 single-use emergency recovery codes.'
+                    ) : (
+                      <>
+                        A 6-digit verification code has been emailed to{' '}
+                        <strong className="text-black">{maskedEmail || 'your email'}</strong>.
+                      </>
+                    )}
+                  </p>
+                </div>
+
+                {!useRecoveryCode ? (
+                  <form onSubmit={handleVerifyCodeSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-2 text-center">
+                        6-Digit Verification Code
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        autoFocus
+                        disabled={isLocked}
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))}
+                        placeholder="000000"
+                        className="w-full py-2.5 px-4 text-center text-2xl font-mono tracking-widest bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors disabled:bg-gray-100 disabled:text-gray-400"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-[#6B7280]">
+                      <span className="flex items-center">
+                        <Clock className="w-3.5 h-3.5 mr-1" />
+                        Code expires in: {formatTime(countdown)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResendCode}
+                        disabled={resendCooldown > 0 || loading || isLocked}
+                        className="text-xs text-black font-semibold hover:underline disabled:opacity-40 flex items-center"
+                      >
+                        <RotateCw className="w-3 h-3 mr-1" />
+                        {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+                      </button>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading || verificationCode.length !== 6 || isLocked}
+                      className="w-full py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                    >
+                      {loading ? 'Verifying...' : 'Verify Code & Sign In'}
+                    </button>
+
+                    <div className="pt-2 text-center border-t border-gray-100 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseRecoveryCode(true);
+                          setError(null);
+                        }}
+                        className="block w-full text-xs text-black font-medium hover:underline"
+                      >
+                        Can&apos;t get the email? Use a recovery code
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleBackToCredentials}
+                        className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                        Back to credentials
+                      </button>
+                    </div>
+                  </form>
                 ) : (
-                  <span className="text-red-600 font-semibold">Code expired</span>
+                  <form onSubmit={handleVerifyRecoveryCodeSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-2 text-center">
+                        Emergency Recovery Code (XXXX-XXXX)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        autoFocus
+                        disabled={isLocked}
+                        value={recoveryCodeInput}
+                        onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
+                        placeholder="ABCD-1234"
+                        className="w-full py-2.5 px-4 text-center text-lg font-mono tracking-wider bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors disabled:bg-gray-100 disabled:text-gray-400"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading || !recoveryCodeInput.trim() || isLocked}
+                      className="w-full py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                    >
+                      {loading ? 'Verifying...' : 'Verify Recovery Code & Sign In'}
+                    </button>
+
+                    <div className="pt-2 text-center border-t border-gray-100 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseRecoveryCode(false);
+                          setError(null);
+                        }}
+                        className="block w-full text-xs text-black font-medium hover:underline"
+                      >
+                        Back to email verification code
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleBackToCredentials}
+                        className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                        Back to credentials
+                      </button>
+                    </div>
+                  </form>
                 )}
               </div>
+            )}
 
-              {/* Resend button */}
-              <button
-                type="button"
-                disabled={resendCooldown > 0 || loading || isLocked}
-                onClick={handleResendCode}
-                className="inline-flex items-center text-xs font-medium text-black hover:underline disabled:opacity-50 disabled:no-underline transition-colors"
-              >
-                <RotateCw className={`w-3 h-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
-              </button>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || verificationCode.length !== 6 || isLocked || countdown === 0}
-              className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                'Verifying Code...'
-              ) : (
-                <>
-                  Verify &amp; Sign In
-                  <ArrowRight className="w-3.5 h-3.5 ml-2" />
-                </>
-              )}
-            </button>
-
-            {/* Recovery Code Option */}
-            <div className="pt-1 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setUseRecoveryCode(true);
-                  setError(null);
-                }}
-                className="text-xs text-[#4B5563] hover:text-black hover:underline transition-colors"
-              >
-                Can&apos;t get the email? Use a recovery code
-              </button>
-            </div>
-
-            {/* Back link */}
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={handleBackToCredentials}
-                className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-                Back to Sign In
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* ================================================================= */}
-        {/* SIGN IN: STEP 2 (Emergency Recovery Code Fallback) */}
-        {/* ================================================================= */}
-        {mode === 'login' && loginStep === 2 && useRecoveryCode && (
-          <form onSubmit={handleVerifyRecoveryCodeSubmit} className="space-y-4">
-            <div className="text-center mb-4">
-              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-black mb-2">
-                <KeyRound className="w-5 h-5 text-black" />
-              </div>
-              <h2 className="text-sm font-bold text-[#111111]">Emergency Recovery Code</h2>
-              <p className="text-xs text-[#6B7280] mt-1">
-                Enter one of your 8-character single-use emergency recovery codes.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1 text-center">
-                Recovery Code
-              </label>
-              <input
-                type="text"
-                required
-                autoFocus
-                autoComplete="off"
-                autoCapitalize="characters"
-                value={recoveryCodeInput}
-                onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
-                placeholder="XXXX-XXXX"
-                className="w-full py-2.5 px-4 text-center text-xl font-mono tracking-widest uppercase bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || !recoveryCodeInput.trim() || isLocked}
-              className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                'Verifying Recovery Code...'
-              ) : (
-                <>
-                  Verify Recovery Code
-                  <ArrowRight className="w-3.5 h-3.5 ml-2" />
-                </>
-              )}
-            </button>
-
-            <div className="pt-2 flex flex-col items-center space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setUseRecoveryCode(false);
-                  setError(null);
-                }}
-                className="text-xs text-[#4B5563] hover:text-black hover:underline transition-colors"
-              >
-                Can receive email? Use 6-digit email code
-              </button>
-
-              <button
-                type="button"
-                onClick={handleBackToCredentials}
-                className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-                Back to Sign In
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* ================================================================= */}
-        {/* FORGOT PASSWORD FLOW */}
-        {/* ================================================================= */}
-        {mode === 'forgot' && (
-          <div className="space-y-4">
-            {forgotStep === 1 ? (
+            {mode === 'forgot' && forgotStep === 1 && (
               <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
                 <div className="text-center mb-4">
-                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-black mb-2">
-                    <KeyRound className="w-5 h-5 text-black" />
-                  </div>
-                  <h2 className="text-sm font-bold text-[#111111]">Forgot Password</h2>
+                  <h2 className="text-sm font-bold text-[#111111] uppercase tracking-wider">
+                    Forgot Password
+                  </h2>
                   <p className="text-xs text-[#6B7280] mt-1">
-                    Enter your username or email address. We will send a 15-minute verification reset code.
+                    Enter your username or email address and we will send a 15-minute reset code.
                   </p>
                 </div>
 
@@ -761,7 +987,7 @@ export default function LoginPage() {
                       autoFocus
                       value={forgotIdentifier}
                       onChange={(e) => setForgotIdentifier(e.target.value)}
-                      placeholder="e.g. counsel or counsel@siwoloadvocates.com"
+                      placeholder="admin or counsel@siwoloadvocates.com"
                       className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
                     />
                   </div>
@@ -769,11 +995,11 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={loading || !forgotIdentifier.trim()}
-                  className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+                  disabled={loading}
+                  className="w-full py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
                 >
                   {loading ? (
-                    'Sending Reset Code...'
+                    'Sending Code...'
                   ) : (
                     <>
                       Send Reset Code
@@ -785,7 +1011,12 @@ export default function LoginPage() {
                 <div className="pt-2 text-center">
                   <button
                     type="button"
-                    onClick={() => switchMode('login')}
+                    onClick={() => {
+                      setMode('login');
+                      setForgotStep(1);
+                      setError(null);
+                      setSuccess(null);
+                    }}
                     className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5 mr-1" />
@@ -793,20 +1024,21 @@ export default function LoginPage() {
                   </button>
                 </div>
               </form>
-            ) : (
+            )}
+
+            {mode === 'forgot' && forgotStep === 2 && (
               <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
                 <div className="text-center mb-4">
-                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-black mb-2">
-                    <ShieldCheck className="w-5 h-5 text-black" />
-                  </div>
-                  <h2 className="text-sm font-bold text-[#111111]">Set New Password</h2>
+                  <h2 className="text-sm font-bold text-[#111111] uppercase tracking-wider">
+                    Reset Password
+                  </h2>
                   <p className="text-xs text-[#6B7280] mt-1">
-                    Enter the 6-digit reset code sent to your email and set your new password.
+                    Enter the 6-digit reset code sent to your email and your new password.
                   </p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1 text-center">
+                  <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-2 text-center">
                     6-Digit Reset Code
                   </label>
                   <input
@@ -893,7 +1125,12 @@ export default function LoginPage() {
                 <div className="pt-2 text-center">
                   <button
                     type="button"
-                    onClick={() => switchMode('login')}
+                    onClick={() => {
+                      setMode('login');
+                      setForgotStep(1);
+                      setError(null);
+                      setSuccess(null);
+                    }}
                     className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5 mr-1" />
@@ -903,133 +1140,6 @@ export default function LoginPage() {
               </form>
             )}
           </div>
-        )}
-
-        {/* ================================================================= */}
-        {/* SIGN UP FORM */}
-        {/* ================================================================= */}
-        {mode === 'signup' && (
-          <form onSubmit={handleSignupSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
-                Full Name
-              </label>
-              <div className="relative">
-                <UserCheck className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  required
-                  value={signupName}
-                  onChange={(e) => setSignupName(e.target.value)}
-                  placeholder="e.g. Peter O. Siwolo"
-                  autoComplete="name"
-                  className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-              </div>
-              <p className="text-[11px] text-[#6B7280] mt-1">
-                Your name as Principal Advocate &amp; Founder
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
-                Username
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  required
-                  value={signupUsername}
-                  onChange={(e) => setSignupUsername(e.target.value)}
-                  placeholder="Choose your system username"
-                  autoComplete="username"
-                  className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type={showSignupPassword ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  value={signupPassword}
-                  onChange={(e) => setSignupPassword(e.target.value)}
-                  placeholder="At least 8 characters"
-                  autoComplete="new-password"
-                  className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSignupPassword((v) => !v)}
-                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
-                  tabIndex={-1}
-                  aria-label={showSignupPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showSignupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
-                Confirm Password
-              </label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type={showSignupConfirmPassword ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  value={signupConfirmPassword}
-                  onChange={(e) => setSignupConfirmPassword(e.target.value)}
-                  placeholder="Re-enter your password"
-                  autoComplete="new-password"
-                  className="w-full pl-9 pr-9 py-2 text-sm bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSignupConfirmPassword((v) => !v)}
-                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
-                  tabIndex={-1}
-                  aria-label={showSignupConfirmPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showSignupConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                'Creating Account...'
-              ) : (
-                <>
-                  <UserPlus className="w-3.5 h-3.5 mr-2" />
-                  Sign Up &amp; Continue
-                </>
-              )}
-            </button>
-
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => switchMode('login')}
-                className="text-xs text-[#374151] hover:text-black underline underline-offset-2 transition-colors"
-              >
-                Already have an account? Sign in
-              </button>
-            </div>
-          </form>
         )}
 
         <div className="mt-6 pt-4 border-t border-[#E5E7EB] text-center text-[11px] text-[#6B7280]">

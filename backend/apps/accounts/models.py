@@ -88,6 +88,7 @@ class LoginChallenge(models.Model):
     sent_count = models.PositiveIntegerField(default=1)
     last_sent_at = models.DateTimeField(default=timezone.now)
     consumed_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -175,7 +176,7 @@ class LoginChallenge(models.Model):
         if self.is_consumed or self.is_locked:
             return False, "This verification challenge is no longer active."
         if self.seconds_until_resend > 0:
-            return False, f"Please wait {self.seconds_until_resend} seconds before requesting a new code."
+            return False, f"Cooldown active: Please wait {self.seconds_until_resend} seconds before requesting a new code."
         if self.sent_count >= 5:
             return False, "Maximum verification code resends reached for this request."
         if not check_hourly_email_limit(self.target_email):

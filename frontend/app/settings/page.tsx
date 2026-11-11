@@ -10,6 +10,10 @@ import {
   KeyRound,
   Copy,
   Check,
+  Mail,
+  ArrowRight,
+  Clock,
+  RotateCw,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
@@ -49,6 +53,19 @@ export default function SettingsPage() {
   const [codesError, setCodesError] = useState<string | null>(null);
   const [codesSuccess, setCodesSuccess] = useState<string | null>(null);
   const [copiedCodes, setCopiedCodes] = useState(false);
+
+  // Email Change Flow State (Stage D)
+  const [showEmailChangeModal, setShowEmailChangeModal] = useState(false);
+  const [emailChangeStep, setEmailChangeStep] = useState<1 | 2>(1);
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [emailPasswordInput, setEmailPasswordInput] = useState('');
+  const [emailChallengeId, setEmailChallengeId] = useState('');
+  const [emailCodeInput, setEmailCodeInput] = useState('');
+  const [emailCountdown, setEmailCountdown] = useState(0);
+  const [emailResendCooldown, setEmailResendCooldown] = useState(0);
+  const [emailChangeLoading, setEmailChangeLoading] = useState(false);
+  const [emailChangeError, setEmailChangeError] = useState<string | null>(null);
+  const [emailChangeSuccess, setEmailChangeSuccess] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
@@ -111,6 +128,94 @@ export default function SettingsPage() {
     }
   };
 
+  // Tick countdown timer for email change verification
+  useEffect(() => {
+    if (!showEmailChangeModal || emailChangeStep !== 2) return;
+
+    const timer = setInterval(() => {
+      setEmailCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      setEmailResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [showEmailChangeModal, emailChangeStep]);
+
+  const handleRequestEmailChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEmailChangeError(null);
+    setEmailChangeSuccess(null);
+
+    const cleanEmail = newEmailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setEmailChangeError('Please enter a valid new email address.');
+      return;
+    }
+    if (!emailPasswordInput) {
+      setEmailChangeError('Please enter your current password to authorize this change.');
+      return;
+    }
+
+    try {
+      setEmailChangeLoading(true);
+      const res = await api.auth.requestEmailChange({
+        current_password: emailPasswordInput,
+        new_email: cleanEmail,
+      });
+      setEmailChallengeId(res.challenge_id);
+      setEmailCountdown(res.expires_in_seconds || 600);
+      setEmailResendCooldown(60);
+      setEmailChangeStep(2);
+      setEmailChangeSuccess(`Verification code sent to ${res.new_email || cleanEmail}`);
+    } catch (err: unknown) {
+      setEmailChangeError(err instanceof Error ? err.message : 'Failed to request email change.');
+    } finally {
+      setEmailChangeLoading(false);
+    }
+  };
+
+  const handleVerifyEmailChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEmailChangeError(null);
+    setEmailChangeSuccess(null);
+
+    const code = emailCodeInput.trim();
+    if (code.length !== 6) {
+      setEmailChangeError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    try {
+      setEmailChangeLoading(true);
+      const res = await api.auth.verifyEmailChange(emailChallengeId, code);
+      setCurrentUser(res.user);
+      setProfileData((prev) => ({ ...prev, email: res.email }));
+      setProfileSuccess(true);
+      setShowEmailChangeModal(false);
+      setEmailChangeStep(1);
+      setNewEmailInput('');
+      setEmailPasswordInput('');
+      setEmailCodeInput('');
+      setTimeout(() => setProfileSuccess(false), 4000);
+    } catch (err: unknown) {
+      setEmailChangeError(err instanceof Error ? err.message : 'Invalid verification code.');
+    } finally {
+      setEmailChangeLoading(false);
+    }
+  };
+
+  const handleResendEmailCode = async () => {
+    if (emailResendCooldown > 0 || emailChangeLoading || !emailChallengeId) return;
+    setEmailChangeError(null);
+    try {
+      const res = await api.auth.resendCode(emailChallengeId);
+      setEmailCountdown(res.expires_in_seconds || 600);
+      setEmailResendCooldown(res.seconds_until_resend || 60);
+      setEmailChangeSuccess('A new verification code has been sent to your new email address.');
+    } catch (err: unknown) {
+      setEmailChangeError(err instanceof Error ? err.message : 'Could not resend verification code.');
+    }
+  };
+
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileError(null);
@@ -118,7 +223,11 @@ export default function SettingsPage() {
 
     try {
       setProfileSaving(true);
-      const updated = await api.auth.updateProfile(profileData);
+      const updated = await api.auth.updateProfile({
+        first_name: profileData.first_name,
+        last_name: profileData.last_name,
+        phone_number: profileData.phone_number,
+      });
       setCurrentUser(updated);
       setProfileSuccess(true);
       setTimeout(() => setProfileSuccess(false), 4000);
@@ -224,16 +333,42 @@ export default function SettingsPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                    Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={profileData.email}
-                    onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
-                    className="w-full px-3 py-1.5 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-semibold text-gray-700">
+                      Email Address (Two-Factor Authentication Destination)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowEmailChangeModal(true);
+                        setEmailChangeStep(1);
+                        setNewEmailInput('');
+                        setEmailPasswordInput('');
+                        setEmailChangeError(null);
+                        setEmailChangeSuccess(null);
+                      }}
+                      className="text-[11px] text-black font-semibold hover:underline flex items-center"
+                    >
+                      <Mail className="w-3 h-3 mr-1" />
+                      Change Email Address
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      readOnly
+                      disabled
+                      value={profileData.email}
+                      className="w-full px-3 py-1.5 bg-gray-50 text-gray-700 border border-[#E5E7EB] rounded cursor-not-allowed font-medium"
+                    />
+                    <div className="absolute right-2.5 top-2 text-[10px] text-emerald-700 font-semibold flex items-center bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      <Shield className="w-3 h-3 mr-1 text-emerald-600" />
+                      Verified 2FA
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    To prevent accidental lockouts, changing your email requires password confirmation and verification of a one-time code sent to the new address.
+                  </p>
                 </div>
 
                 <div>
@@ -577,6 +712,157 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Email Change Modal (Stage D) */}
+      {showEmailChangeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded border border-[#E5E7EB] shadow-xl max-w-md w-full p-6 text-xs">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900 uppercase tracking-wider text-sm flex items-center">
+                <Mail className="w-4 h-4 mr-2" />
+                Change 2FA Email Address
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEmailChangeModal(false);
+                  setEmailChangeStep(1);
+                  setEmailChangeError(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            {emailChangeError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 flex items-center">
+                <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                {emailChangeError}
+              </div>
+            )}
+            {emailChangeSuccess && (
+              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 flex items-center">
+                <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0" />
+                {emailChangeSuccess}
+              </div>
+            )}
+
+            {emailChangeStep === 1 ? (
+              <form onSubmit={handleRequestEmailChange} className="space-y-4">
+                <p className="text-gray-600">
+                  Enter your new email address and confirm your current password. A 6-digit verification code will be emailed to your new address before any changes take effect.
+                </p>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 uppercase mb-1">
+                    New Email Address
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    autoFocus
+                    placeholder="advocate@siwoloadvocates.com"
+                    value={newEmailInput}
+                    onChange={(e) => setNewEmailInput(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 uppercase mb-1">
+                    Current Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter current password to authorize"
+                    value={emailPasswordInput}
+                    onChange={(e) => setEmailPasswordInput(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailChangeModal(false)}
+                    className="px-3 py-2 text-gray-600 hover:text-black"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={emailChangeLoading || !newEmailInput || !emailPasswordInput}
+                    className="px-4 py-2 bg-[#111111] hover:bg-black text-white font-medium rounded disabled:opacity-50 flex items-center"
+                  >
+                    {emailChangeLoading ? 'Sending Code...' : (
+                      <>
+                        Send Verification Code
+                        <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyEmailChange} className="space-y-4">
+                <p className="text-gray-600">
+                  Please enter the 6-digit confirmation code emailed to <strong>{newEmailInput}</strong>:
+                </p>
+
+                <div>
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={emailCodeInput}
+                    onChange={(e) => setEmailCodeInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    className="w-full py-2.5 px-4 text-center text-2xl font-mono tracking-widest border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span className="flex items-center">
+                    <Clock className="w-3.5 h-3.5 mr-1" />
+                    Code expires in: {Math.floor(emailCountdown / 60)}:{(emailCountdown % 60).toString().padStart(2, '0')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleResendEmailCode}
+                    disabled={emailResendCooldown > 0 || emailChangeLoading}
+                    className="text-black font-semibold hover:underline disabled:opacity-40 flex items-center"
+                  >
+                    <RotateCw className="w-3 h-3 mr-1" />
+                    {emailResendCooldown > 0 ? `Resend (${emailResendCooldown}s)` : 'Resend Code'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEmailChangeStep(1)}
+                    className="text-gray-600 hover:text-black"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={emailChangeLoading || emailCodeInput.length !== 6}
+                    className="px-4 py-2 bg-[#111111] hover:bg-black text-white font-medium rounded disabled:opacity-50 flex items-center"
+                  >
+                    {emailChangeLoading ? 'Verifying...' : 'Confirm & Update Email'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
