@@ -7,6 +7,9 @@ import {
   Shield,
   CheckCircle2,
   AlertCircle,
+  KeyRound,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Header } from '../../components/Header';
 import { Badge } from '../../components/Badge';
@@ -37,12 +40,23 @@ export default function SettingsPage() {
   const [pwSuccess, setPwSuccess] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
 
+  // Recovery Codes State
+  const [remainingCodes, setRemainingCodes] = useState<number | null>(null);
+  const [showGenerateCodes, setShowGenerateCodes] = useState(false);
+  const [generatePassword, setGeneratePassword] = useState('');
+  const [newCodesList, setNewCodesList] = useState<string[]>([]);
+  const [generatingCodes, setGeneratingCodes] = useState(false);
+  const [codesError, setCodesError] = useState<string | null>(null);
+  const [codesSuccess, setCodesSuccess] = useState<string | null>(null);
+  const [copiedCodes, setCopiedCodes] = useState(false);
+
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [userRes, auditRes] = await Promise.all([
+      const [userRes, auditRes, codesRes] = await Promise.all([
         api.auth.me(),
         api.audit.list(),
+        api.auth.getRecoveryCodesCount().catch(() => ({ remaining: 0 })),
       ]);
       setCurrentUser(userRes);
       setProfileData({
@@ -51,6 +65,7 @@ export default function SettingsPage() {
         email: userRes.email || '',
         phone_number: userRes.phone_number || '',
       });
+      setRemainingCodes(codesRes.remaining);
       setAuditLogs(Array.isArray(auditRes) ? auditRes : (auditRes as any).results || []);
     } catch {
       // ignore
@@ -62,6 +77,39 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const handleGenerateRecoveryCodes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCodesError(null);
+    setCodesSuccess(null);
+    setCopiedCodes(false);
+
+    if (!generatePassword) {
+      setCodesError('Please enter your current password to generate new recovery codes.');
+      return;
+    }
+
+    try {
+      setGeneratingCodes(true);
+      const res = await api.auth.generateRecoveryCodes(generatePassword);
+      setNewCodesList(res.recovery_codes);
+      setRemainingCodes(res.count);
+      setGeneratePassword('');
+      setCodesSuccess('New recovery codes generated successfully. Store them in a safe place.');
+    } catch (err: unknown) {
+      setCodesError(err instanceof Error ? err.message : 'Failed to generate recovery codes.');
+    } finally {
+      setGeneratingCodes(false);
+    }
+  };
+
+  const handleCopyCodes = () => {
+    if (newCodesList.length > 0) {
+      navigator.clipboard.writeText(newCodesList.join('\n'));
+      setCopiedCodes(true);
+      setTimeout(() => setCopiedCodes(false), 3000);
+    }
+  };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -274,6 +322,145 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+
+            {/* Card 3: Emergency Recovery Codes */}
+            <div className="bg-white border border-[#E5E7EB] rounded p-6 shadow-sm lg:col-span-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
+                <h3 className="text-xs font-bold text-[#111111] uppercase tracking-wider flex items-center">
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Two-Factor Emergency Recovery Codes
+                </h3>
+                {remainingCodes !== null && (
+                  <Badge
+                    variant={remainingCodes === 0 ? 'danger' : remainingCodes <= 3 ? 'warning' : 'success'}
+                  >
+                    {remainingCodes === 0
+                      ? '0 codes remaining'
+                      : `${remainingCodes} active code${remainingCodes === 1 ? '' : 's'} remaining`}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-[#6B7280] mb-4">
+                Single-use recovery codes allow you to access your administrator account if you are temporarily unable to receive the 2FA verification email. Each code can only be used once.
+              </p>
+
+              {remainingCodes !== null && remainingCodes <= 3 && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 flex items-start">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5 text-amber-600" />
+                  <div>
+                    <span className="font-semibold">Few recovery codes remaining: </span>
+                    You have {remainingCodes} recovery code{remainingCodes === 1 ? '' : 's'} left. We recommend generating a new set of 10 codes and storing them securely.
+                  </div>
+                </div>
+              )}
+
+              {codesSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-center">
+                  <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0" />
+                  {codesSuccess}
+                </div>
+              )}
+              {codesError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                  {codesError}
+                </div>
+              )}
+
+              {/* Newly generated codes display */}
+              {newCodesList.length > 0 && (
+                <div className="mb-5 p-4 bg-gray-50 border border-gray-300 rounded">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                      Your New Emergency Recovery Codes
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyCodes}
+                      className="inline-flex items-center text-xs font-medium text-black hover:underline"
+                    >
+                      {copiedCodes ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 mr-1" />
+                          Copy All Codes
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center mb-3">
+                    {newCodesList.map((code, idx) => (
+                      <div
+                        key={idx}
+                        className="py-1.5 px-2 bg-white border border-gray-300 rounded font-mono text-xs font-semibold text-gray-900 tracking-wider shadow-2xs"
+                      >
+                        {code}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-gray-600">
+                    ⚠️ <strong>Important:</strong> Store these 10 single-use codes offline or in your secure password manager. They will not be displayed again after you leave this page. All previously generated recovery codes have been invalidated.
+                  </p>
+                </div>
+              )}
+
+              {/* Generate codes toggle / form */}
+              {!showGenerateCodes ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowGenerateCodes(true);
+                      setCodesError(null);
+                    }}
+                    className="px-4 py-2 bg-[#111111] text-white text-xs font-medium rounded hover:bg-black transition-colors"
+                  >
+                    Generate New Recovery Codes
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleGenerateRecoveryCodes} className="space-y-3 max-w-md pt-2">
+                  <p className="text-xs text-gray-700 font-medium">
+                    Please confirm your current password to invalidate old codes and generate 10 new recovery codes:
+                  </p>
+                  <div>
+                    <input
+                      type="password"
+                      required
+                      autoFocus
+                      placeholder="Enter current password"
+                      value={generatePassword}
+                      onChange={(e) => setGeneratePassword(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs border border-[#E5E7EB] rounded focus:outline-none focus:border-black"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={generatingCodes || !generatePassword}
+                      className="px-4 py-2 bg-[#111111] text-white text-xs font-medium rounded hover:bg-black disabled:opacity-50 transition-colors"
+                    >
+                      {generatingCodes ? 'Generating...' : 'Confirm & Generate 10 Codes'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowGenerateCodes(false);
+                        setGeneratePassword('');
+                        setCodesError(null);
+                      }}
+                      className="px-3 py-2 text-xs text-gray-600 hover:text-black transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>

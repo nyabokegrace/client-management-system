@@ -119,6 +119,48 @@ class ApiClient {
       }
       return data;
     },
+    verifyRecoveryCode: async (challenge_id: string, recovery_code: string) => {
+      const data = await this.request<{
+        token: string;
+        user: User;
+        remaining_codes: number;
+        warning?: string;
+        message: string;
+      }>('/auth/verify-recovery-code/', {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id, recovery_code }),
+      });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('siwolo_token', data.token);
+        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
+      }
+      return data;
+    },
+    generateRecoveryCodes: async (password: string) => {
+      return this.request<{
+        recovery_codes: string[];
+        count: number;
+        message: string;
+      }>('/auth/recovery-codes/generate/', {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+      });
+    },
+    getRecoveryCodesCount: async () => {
+      return this.request<{ remaining: number }>('/auth/recovery-codes/count/');
+    },
+    forgotPassword: async (identifier: string) => {
+      return this.request<{ message: string }>('/auth/forgot-password/', {
+        method: 'POST',
+        body: JSON.stringify({ identifier }),
+      });
+    },
+    resetPassword: async (data: { identifier: string; code: string; new_password: string }) => {
+      return this.request<{ message: string }>('/auth/reset-password/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
     resendCode: async (challenge_id: string) => {
       return this.request<{
         message: string;

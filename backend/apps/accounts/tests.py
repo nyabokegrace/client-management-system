@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from .models import User, UserRole, LoginChallenge, ChallengePurpose
+from .models import User, UserRole, LoginChallenge, ChallengePurpose, RecoveryCode
 from apps.audit.models import AuditLog, AuditAction
 from .emails import (
     generate_six_digit_code,
@@ -570,6 +570,263 @@ class StageBTwoFactorAuthTests(TestCase):
         for log in logs:
             self.assertNotIn('SuperSecretPasswordXYZ', log.target_repr)
             self.assertNotIn('SuperSecretPasswordXYZ', str(log.details))
+
+
+class StageCRecoveryCodesAndForgotPasswordTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        mail.outbox.clear()
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='siwolo_counsel',
+            email='counsel@siwoloadvocates.com',
+            password='InitialPassword123!',
+            first_name='Peter',
+            last_name='Siwolo',
+            role=UserRole.ADMIN
+        )
+
+    def tearDown(self):
+        mail.outbox.clear()
+
+    def test_generate_recovery_codes_requires_auth(self):
+        url = reverse('auth-generate-recovery-codes')
+        res = self.client.post(url, {'password': 'InitialPassword123!'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_generate_recovery_codes_wrong_password(self):
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        url = reverse('auth-generate-recovery-codes')
+        res = self.client.post(url, {'password': 'WrongPassword999!'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Incorrect password', res.data['error'])
+
+    def test_generate_recovery_codes_success_and_invalidation(self):
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        url = reverse('auth-generate-recovery-codes')
+
+        # First generation: returns 10 codes
+        res1 = self.client.post(url, {'password': 'InitialPassword123!'}, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res1.data['recovery_codes']), 10)
+        self.assertEqual(res1.data['count'], 10)
+        first_codes = res1.data['recovery_codes']
+
+        # Verify format (XXXX-XXXX)
+        for code in first_codes:
+            self.assertRegex(code, r'^[A-F0-9]{4}-[A-F0-9]{4}$')
+
+        # Active codes count in DB should be 10
+        self.assertEqual(RecoveryCode.objects.filter(user=self.user, consumed_at__isnull=True).count(), 10)
+
+        # Count endpoint
+        count_url = reverse('auth-recovery-codes-count')
+        count_res = self.client.get(count_url)
+        self.assertEqual(count_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(count_res.data['remaining'], 10)
+
+        # Second generation invalidates first set
+        res2 = self.client.post(url, {'password': 'InitialPassword123!'}, format='json')
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        second_codes = res2.data['recovery_codes']
+        self.assertEqual(len(second_codes), 10)
+
+        # None of the old codes should exist anymore in DB
+        self.assertEqual(RecoveryCode.objects.filter(user=self.user).count(), 10)
+        for old_code in first_codes:
+            ok, _ = RecoveryCode.verify_and_consume(self.user, old_code)
+            self.assertFalse(ok)
+
+    def test_verify_recovery_code_happy_path_and_single_use(self):
+        # 1. Generate codes
+        codes = RecoveryCode.generate_codes_for_user(self.user, count=10)
+        used_code = codes[0]
+
+        # 2. Initiate login to get challenge
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'siwolo_counsel',
+            'password': 'InitialPassword123!'
+        }, format='json')
+        self.assertEqual(login_res.status_code, status.HTTP_200_OK)
+        challenge_id = login_res.data['challenge_id']
+
+        # 3. Verify with recovery code
+        verify_url = reverse('auth-verify-recovery-code')
+        verify_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'recovery_code': used_code.lower()  # test case-insensitivity
+        }, format='json')
+
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+        self.assertIn('token', verify_res.data)
+        self.assertEqual(verify_res.data['remaining_codes'], 9)
+        self.assertIsNone(verify_res.data.get('warning'))
+
+        # Check challenge is consumed
+        challenge = LoginChallenge.objects.get(id=challenge_id)
+        self.assertTrue(challenge.is_consumed)
+
+        # Check audit log
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.RECOVERY_CODE_USED, actions)
+        self.assertIn(AuditAction.SIGN_IN_SUCCEEDED, actions)
+
+        # 4. Attempt to reuse consumed code on a new challenge -> must fail
+        login_res2 = self.client.post(login_url, {
+            'username': 'siwolo_counsel',
+            'password': 'InitialPassword123!'
+        }, format='json')
+        challenge_id2 = login_res2.data['challenge_id']
+
+        replay_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id2,
+            'recovery_code': used_code
+        }, format='json')
+        self.assertEqual(replay_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid recovery code', replay_res.data['error'])
+
+    def test_recovery_code_low_count_warning(self):
+        # Generate 3 codes
+        codes = RecoveryCode.generate_codes_for_user(self.user, count=3)
+
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'siwolo_counsel',
+            'password': 'InitialPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        verify_url = reverse('auth-verify-recovery-code')
+        verify_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'recovery_code': codes[0]
+        }, format='json')
+
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(verify_res.data['remaining_codes'], 2)
+        # Warning must be present when <= 3 remain
+        self.assertIsNotNone(verify_res.data.get('warning'))
+        self.assertIn('2 recovery codes remaining', verify_res.data['warning'])
+
+    def test_recovery_code_five_attempts_locks(self):
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'siwolo_counsel',
+            'password': 'InitialPassword123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        verify_url = reverse('auth-verify-recovery-code')
+        for _ in range(4):
+            res = self.client.post(verify_url, {'challenge_id': challenge_id, 'recovery_code': 'BOGUS-CODE'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertFalse(res.data.get('is_locked'))
+
+        # 5th attempt locks
+        res5 = self.client.post(verify_url, {'challenge_id': challenge_id, 'recovery_code': 'BOGUS-CODE'}, format='json')
+        self.assertEqual(res5.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(res5.data.get('is_locked'))
+
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.CHALLENGE_LOCKED, actions)
+
+    def test_forgot_password_generic_response(self):
+        forgot_url = reverse('auth-forgot-password')
+
+        # 1. Existing user
+        res_exists = self.client.post(forgot_url, {'identifier': 'siwolo_counsel'}, format='json')
+        self.assertEqual(res_exists.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_exists.data['message'], "If an account matches that username or email, a reset code has been sent.")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("password reset", mail.outbox[0].body)
+        self.assertIn("15 minutes", mail.outbox[0].body)
+
+        # 2. Non-existent user
+        mail.outbox.clear()
+        res_nonexistent = self.client.post(forgot_url, {'identifier': 'nonexistent_user_999'}, format='json')
+        self.assertEqual(res_nonexistent.status_code, status.HTTP_200_OK)
+        # Message must be identical
+        self.assertEqual(res_nonexistent.data['message'], res_exists.data['message'])
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_reset_password_success_flow(self):
+        # 1. Simulate active session token
+        old_token = Token.objects.create(user=self.user)
+
+        # 2. Trigger forgot password
+        forgot_url = reverse('auth-forgot-password')
+        self.client.post(forgot_url, {'identifier': 'counsel@siwoloadvocates.com'}, format='json')
+        self.assertEqual(len(mail.outbox), 1)
+
+        import re
+        code_match = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body)
+        self.assertIsNotNone(code_match)
+        reset_code = code_match.group(1)
+
+        # 3. Reset password
+        reset_url = reverse('auth-reset-password')
+        reset_res = self.client.post(reset_url, {
+            'identifier': 'siwolo_counsel',
+            'code': reset_code,
+            'new_password': 'BrandNewSecurePassword@2026'
+        }, format='json')
+
+        self.assertEqual(reset_res.status_code, status.HTTP_200_OK)
+        self.assertIn('Password has been reset successfully', reset_res.data['message'])
+        # Must not issue a token
+        self.assertNotIn('token', reset_res.data)
+
+        # 4. Old token must be deleted (all sessions ended)
+        self.assertFalse(Token.objects.filter(key=old_token.key).exists())
+        self.assertEqual(Token.objects.filter(user=self.user).count(), 0)
+
+        # 5. User password updated
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('BrandNewSecurePassword@2026'))
+        self.assertFalse(self.user.check_password('InitialPassword123!'))
+
+        # 6. Audit log records PASSWORD_RESET
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.PASSWORD_RESET, actions)
+
+        # 7. Challenge cannot be reused
+        replay_res = self.client.post(reset_url, {
+            'identifier': 'siwolo_counsel',
+            'code': reset_code,
+            'new_password': 'YetAnotherPassword@2026'
+        }, format='json')
+        self.assertEqual(replay_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_reset_password_weak_password_or_wrong_code(self):
+        forgot_url = reverse('auth-forgot-password')
+        self.client.post(forgot_url, {'identifier': 'siwolo_counsel'}, format='json')
+
+        import re
+        code_match = re.search(r'code is:\s*(\d{6})', mail.outbox[0].body)
+        reset_code = code_match.group(1)
+
+        reset_url = reverse('auth-reset-password')
+
+        # Wrong code
+        res_wrong_code = self.client.post(reset_url, {
+            'identifier': 'siwolo_counsel',
+            'code': '000000',
+            'new_password': 'BrandNewSecurePassword@2026'
+        }, format='json')
+        self.assertEqual(res_wrong_code.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Weak/short password
+        res_weak_pw = self.client.post(reset_url, {
+            'identifier': 'siwolo_counsel',
+            'code': reset_code,
+            'new_password': 'short'
+        }, format='json')
+        self.assertEqual(res_weak_pw.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', res_weak_pw.data)
+
 
 
 

@@ -10,6 +10,7 @@ export interface User {
   role: UserRole;
   phone_number?: string;
   is_active: boolean;
+  recovery_codes_remaining?: number;
   created_at: string;
 }
 

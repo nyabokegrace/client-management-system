@@ -44,3 +44,32 @@ class ResendCodeRateThrottle(SimpleRateThrottle):
             'ident': ident
         }
 
+
+class ForgotPasswordRateThrottle(SimpleRateThrottle):
+    """
+    Limits forgot-password requests from a given IP address.
+    """
+    scope = 'forgot_password'
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': ident
+        }
+
+
+class ResetPasswordRateThrottle(SimpleRateThrottle):
+    """
+    Limits password reset attempts from a given IP address.
+    """
+    scope = 'reset_password'
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': ident
+        }
+
+

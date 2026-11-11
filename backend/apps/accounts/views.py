@@ -1,6 +1,9 @@
 from datetime import timedelta
 from django.utils import timezone
 from django.conf import settings
+from django.db.models import Q
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from config.firm_settings import get_firm_details
 from rest_framework import generics, status, viewsets
 from rest_framework.response import Response
@@ -8,11 +11,13 @@ from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import User, UserRole, LoginChallenge, ChallengePurpose
+from .models import User, UserRole, LoginChallenge, ChallengePurpose, RecoveryCode
 from .throttling import (
     LoginBurstRateThrottle,
     VerifyCodeRateThrottle,
     ResendCodeRateThrottle,
+    ForgotPasswordRateThrottle,
+    ResetPasswordRateThrottle,
 )
 from .emails import mask_email
 from .serializers import (
@@ -396,6 +401,357 @@ class ChangePasswordView(APIView):
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
         return Response({'message': 'Password updated successfully.'}, status=status.HTTP_200_OK)
+
+
+class VerifyRecoveryCodeView(APIView):
+    """
+    Verifies a single-use emergency recovery code in place of an email 2FA code.
+    Consumes the recovery code, consumes the login challenge, writes to the audit log,
+    and returns the 12-hour auth token.
+    Warns the user when 3 or fewer recovery codes remain.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [VerifyCodeRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        challenge_id = request.data.get('challenge_id')
+        code = (request.data.get('recovery_code') or request.data.get('code', '')).strip()
+
+        if not challenge_id or not code:
+            return Response(
+                {'error': 'challenge_id and recovery_code are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            challenge = LoginChallenge.objects.get(id=challenge_id, purpose=ChallengePurpose.LOGIN)
+        except (LoginChallenge.DoesNotExist, ValueError):
+            log_activity(
+                actor=None,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_repr="Invalid challenge ID during recovery code verification",
+                ip_address=ip_addr
+            )
+            return Response(
+                {'error': 'Invalid or expired verification challenge.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if challenge.is_consumed or challenge.is_expired or challenge.is_locked:
+            error_msg = "This verification challenge has expired." if challenge.is_expired else (
+                "This verification challenge has been locked due to too many failed attempts." if challenge.is_locked else
+                "This verification challenge has already been used."
+            )
+            return Response({'error': error_msg, 'is_locked': challenge.is_locked, 'is_expired': challenge.is_expired}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not challenge.user:
+            return Response({'error': 'No user associated with this challenge.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, remaining = RecoveryCode.verify_and_consume(challenge.user, code)
+        if not ok:
+            challenge.attempts += 1
+            challenge.save(update_fields=['attempts'])
+            if challenge.is_locked:
+                log_activity(
+                    actor=challenge.user,
+                    action=AuditAction.CHALLENGE_LOCKED,
+                    module=AuditModule.AUTH,
+                    target_id=str(challenge.id),
+                    target_repr=f"Verification challenge locked after 5 failed attempts for {challenge.target_email}",
+                    ip_address=ip_addr
+                )
+                return Response(
+                    {'error': 'This verification challenge has been locked due to too many failed attempts.', 'is_locked': True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            else:
+                log_activity(
+                    actor=challenge.user,
+                    action=AuditAction.CODE_FAILED,
+                    module=AuditModule.AUTH,
+                    target_id=str(challenge.id),
+                    target_repr=f"Failed recovery code attempt ({challenge.attempts}/5) for {challenge.target_email}",
+                    ip_address=ip_addr
+                )
+                return Response({'error': 'Invalid recovery code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Mark challenge consumed
+        challenge.consumed_at = timezone.now()
+        challenge.save(update_fields=['consumed_at'])
+
+        # Log recovery code used
+        log_activity(
+            actor=challenge.user,
+            action=AuditAction.RECOVERY_CODE_USED,
+            module=AuditModule.AUTH,
+            target_id=str(challenge.user.id),
+            target_repr=f"Emergency recovery code used for sign-in ({remaining} remaining)",
+            ip_address=ip_addr
+        )
+
+        # Issue 12-hour expiring token
+        token, created = Token.objects.get_or_create(user=challenge.user)
+        if not created and (timezone.now() - token.created > timedelta(hours=12)):
+            token.delete()
+            token = Token.objects.create(user=challenge.user)
+
+        log_activity(
+            actor=challenge.user,
+            action=AuditAction.SIGN_IN_SUCCEEDED,
+            module=AuditModule.AUTH,
+            target_id=str(challenge.user.id),
+            target_repr=f"Sign-in succeeded with recovery code for {challenge.user.username}",
+            ip_address=ip_addr
+        )
+
+        user_data = UserSerializer(challenge.user).data
+        user_data['firm'] = get_firm_details()
+
+        warning = None
+        if remaining <= 3:
+            warning = f"Warning: You have only {remaining} recovery code{'s' if remaining != 1 else ''} remaining. Please generate a new set in My Profile."
+
+        return Response({
+            'token': token.key,
+            'user': user_data,
+            'remaining_codes': remaining,
+            'warning': warning,
+            'message': 'Authentication successful via recovery code.'
+        }, status=status.HTTP_200_OK)
+
+
+class GenerateRecoveryCodesView(APIView):
+    """
+    Generates 10 new emergency single-use recovery codes for the authenticated user.
+    Requires providing their current password. Invalidates any previous recovery codes.
+    Codes are displayed exactly once in the response.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        password = request.data.get('password', '')
+
+        if not password:
+            return Response(
+                {'error': 'Current password is required to generate new recovery codes.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not request.user.check_password(password):
+            log_activity(
+                actor=request.user,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_id=str(request.user.id),
+                target_repr=f"Incorrect password attempt while generating recovery codes for {request.user.username}",
+                ip_address=ip_addr
+            )
+            return Response(
+                {'error': 'Incorrect password. Please enter your current password.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        codes = RecoveryCode.generate_codes_for_user(request.user, count=10)
+
+        log_activity(
+            actor=request.user,
+            action=AuditAction.UPDATE,
+            module=AuditModule.AUTH,
+            target_id=str(request.user.id),
+            target_repr=f"Generated new set of 10 recovery codes for {request.user.username}",
+            ip_address=ip_addr
+        )
+
+        return Response({
+            'recovery_codes': codes,
+            'count': len(codes),
+            'message': '10 new recovery codes generated. Store them in a safe place. They will not be shown again.'
+        }, status=status.HTTP_200_OK)
+
+
+class RecoveryCodeCountView(APIView):
+    """
+    Returns the count of remaining active recovery codes for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        remaining = RecoveryCode.objects.filter(user=request.user, consumed_at__isnull=True).count()
+        return Response({'remaining': remaining}, status=status.HTTP_200_OK)
+
+
+class ForgotPasswordView(APIView):
+    """
+    Initiates a password reset challenge.
+    Takes a username or email identifier.
+    Always returns the exact same generic success response regardless of account existence.
+    If the account exists, emails a 15-minute reset challenge code.
+    Strictly throttled and audit-logged.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [ForgotPasswordRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        identifier = (request.data.get('identifier') or request.data.get('username') or request.data.get('email', '')).strip()
+
+        if identifier:
+            user = User.objects.filter(
+                Q(username__iexact=identifier) | Q(email__iexact=identifier),
+                is_active=True
+            ).first()
+
+            if user and user.email:
+                challenge, code, sent_ok, send_err = LoginChallenge.create_challenge(
+                    user=user,
+                    target_email=user.email,
+                    purpose=ChallengePurpose.RESET,
+                    ttl_minutes=15
+                )
+                if sent_ok:
+                    log_activity(
+                        actor=user,
+                        action=AuditAction.CODE_SENT,
+                        module=AuditModule.AUTH,
+                        target_id=str(challenge.id),
+                        target_repr=f"Password reset verification code sent to {mask_email(user.email)}",
+                        ip_address=ip_addr
+                    )
+                else:
+                    log_activity(
+                        actor=user,
+                        action=AuditAction.CODE_FAILED,
+                        module=AuditModule.AUTH,
+                        target_id=str(challenge.id) if challenge else '',
+                        target_repr=f"Failed to deliver password reset code to {user.email}: {send_err}",
+                        ip_address=ip_addr
+                    )
+            else:
+                log_activity(
+                    actor=None,
+                    actor_name=identifier[:100],
+                    action=AuditAction.CODE_FAILED,
+                    module=AuditModule.AUTH,
+                    target_repr="Password reset requested for nonexistent or inactive identifier",
+                    ip_address=ip_addr
+                )
+
+        return Response({
+            'message': 'If an account matches that username or email, a reset code has been sent.'
+        }, status=status.HTTP_200_OK)
+
+
+class ResetPasswordView(APIView):
+    """
+    Resets user password with a verified reset challenge code.
+    Validates password complexity using Django validators.
+    Ends every existing session by deleting auth tokens.
+    Consumes the challenge.
+    Requires user to sign in normally afterwards (enforcing 2FA).
+    Strictly throttled and audit-logged.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [ResetPasswordRateThrottle]
+
+    def post(self, request):
+        ip_addr = get_client_ip(request)
+        identifier = (request.data.get('identifier') or request.data.get('username') or request.data.get('email', '')).strip()
+        code = request.data.get('code', '').strip()
+        new_password = request.data.get('new_password', '')
+
+        if not identifier or not code or not new_password:
+            return Response(
+                {'error': 'identifier, code, and new_password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(
+            Q(username__iexact=identifier) | Q(email__iexact=identifier),
+            is_active=True
+        ).first()
+
+        if not user:
+            log_activity(
+                actor=None,
+                actor_name=identifier[:100],
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_repr="Password reset failed: user not found",
+                ip_address=ip_addr
+            )
+            return Response({'error': 'Invalid or expired reset code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        challenge = LoginChallenge.objects.filter(
+            user=user,
+            purpose=ChallengePurpose.RESET,
+            consumed_at__isnull=True
+        ).order_by('-created_at').first()
+
+        if not challenge or challenge.is_expired or challenge.is_locked:
+            log_activity(
+                actor=user,
+                action=AuditAction.CODE_FAILED,
+                module=AuditModule.AUTH,
+                target_id=str(challenge.id) if challenge else '',
+                target_repr="Password reset failed: challenge not found or expired/locked",
+                ip_address=ip_addr
+            )
+            return Response({'error': 'Invalid or expired reset code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err_msg = challenge.verify(code)
+        if not ok:
+            if challenge.is_locked:
+                log_activity(
+                    actor=user,
+                    action=AuditAction.CHALLENGE_LOCKED,
+                    module=AuditModule.AUTH,
+                    target_id=str(challenge.id),
+                    target_repr=f"Reset challenge locked after 5 failed attempts for {user.username}",
+                    ip_address=ip_addr
+                )
+            else:
+                log_activity(
+                    actor=user,
+                    action=AuditAction.CODE_FAILED,
+                    module=AuditModule.AUTH,
+                    target_id=str(challenge.id),
+                    target_repr=f"Failed reset code verification attempt ({challenge.attempts}/5) for {user.username}",
+                    ip_address=ip_addr
+                )
+            return Response({'error': err_msg or 'Invalid reset code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate password with Django validators
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as err:
+            return Response({'error': list(err.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        # Invalidate all existing auth tokens (ends every existing session)
+        Token.objects.filter(user=user).delete()
+
+        # Mark challenge as consumed
+        challenge.consumed_at = timezone.now()
+        challenge.save(update_fields=['consumed_at'])
+
+        log_activity(
+            actor=user,
+            action=AuditAction.PASSWORD_RESET,
+            module=AuditModule.AUTH,
+            target_id=str(user.id),
+            target_repr=f"Password successfully reset for {user.username}",
+            ip_address=ip_addr
+        )
+
+        return Response({
+            'message': 'Password has been reset successfully. Please sign in with your new password.'
+        }, status=status.HTTP_200_OK)
 
 
 class UserViewSet(viewsets.ModelViewSet):

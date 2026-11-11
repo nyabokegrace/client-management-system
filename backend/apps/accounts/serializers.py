@@ -6,6 +6,7 @@ from .models import User, UserRole
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
+    recovery_codes_remaining = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -19,10 +20,16 @@ class UserSerializer(serializers.ModelSerializer):
             'role',
             'phone_number',
             'is_active',
+            'recovery_codes_remaining',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'full_name']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'full_name', 'recovery_codes_remaining']
+
+    def get_recovery_codes_remaining(self, obj):
+        if hasattr(obj, 'recovery_codes'):
+            return obj.recovery_codes.filter(consumed_at__isnull=True).count()
+        return 0
 
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
