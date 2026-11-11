@@ -71,6 +71,19 @@ class ApiClient {
 
   // Authentication
   auth = {
+    getSetupStatus: async () => {
+      return this.request<{ has_users: boolean; firm_name: string }>('/auth/setup-status/');
+    },
+    signup: async (data: { name: string; username: string; password: string; email?: string }) => {
+      return this.request<{
+        message: string;
+        username: string;
+        full_name: string;
+      }>('/auth/signup/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
     login: async (credentials: { username: string; password: string }) => {
       const data = await this.request<{
         token: string;

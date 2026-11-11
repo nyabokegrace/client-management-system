@@ -141,3 +141,73 @@ class AccountsAuthenticationTests(TestCase):
         # 6th attempt should be throttled
         throttled_res = self.client.post(url, {'username': 'admin_test', 'password': 'WrongPassword'}, format='json')
         self.assertEqual(throttled_res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_setup_status_endpoint(self):
+        url = reverse('auth-setup-status')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['has_users'])
+        self.assertEqual(response.data['firm_name'], 'Siwolo P.O Law Advocates')
+
+    def test_signup_success_and_login_flow(self):
+        signup_url = reverse('auth-signup')
+        signup_payload = {
+            'name': 'Peter O. Siwolo',
+            'username': 'siwolo_counsel',
+            'password': 'StrongSecurePassword@2026',
+        }
+        signup_response = self.client.post(signup_url, signup_payload, format='json')
+        self.assertEqual(signup_response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('Account created successfully', signup_response.data['message'])
+        self.assertEqual(signup_response.data['username'], 'siwolo_counsel')
+
+        # Verify user was created with correct fields
+        created_user = User.objects.get(username='siwolo_counsel')
+        self.assertEqual(created_user.first_name, 'Peter O.')
+        self.assertEqual(created_user.last_name, 'Siwolo')
+        self.assertEqual(created_user.full_name, 'Peter O. Siwolo')
+        self.assertEqual(created_user.role, UserRole.ADMIN)
+        self.assertTrue(created_user.is_superuser)
+        self.assertTrue(created_user.check_password('StrongSecurePassword@2026'))
+
+        # Log in with the exact same username and password used to sign up
+        login_url = reverse('auth-login')
+        login_response = self.client.post(login_url, {
+            'username': 'siwolo_counsel',
+            'password': 'StrongSecurePassword@2026',
+        }, format='json')
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        self.assertIn('token', login_response.data)
+        self.assertEqual(login_response.data['user']['username'], 'siwolo_counsel')
+        self.assertEqual(login_response.data['user']['full_name'], 'Peter O. Siwolo')
+
+    def test_signup_duplicate_username(self):
+        url = reverse('auth-signup')
+        response = self.client.post(url, {
+            'name': 'Duplicate User',
+            'username': 'admin_test',
+            'password': 'StrongSecurePassword@2026',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('username', response.data)
+
+    def test_signup_short_password(self):
+        url = reverse('auth-signup')
+        response = self.client.post(url, {
+            'name': 'Peter Siwolo',
+            'username': 'new_advocate',
+            'password': 'short',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('password', response.data)
+
+    def test_signup_blank_name(self):
+        url = reverse('auth-signup')
+        response = self.client.post(url, {
+            'name': '   ',
+            'username': 'new_advocate_2',
+            'password': 'StrongSecurePassword@2026',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('name', response.data)
+

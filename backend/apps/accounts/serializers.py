@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, UserRole
@@ -100,3 +101,49 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError('Current password does not match.')
         return value
+
+
+class SignUpSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=True)
+    username = serializers.CharField(max_length=150, required=True)
+    password = serializers.CharField(write_only=True, required=True, min_length=8)
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+    def validate_name(self, value):
+        name = value.strip()
+        if not name:
+            raise serializers.ValidationError("Name cannot be blank.")
+        return name
+
+    def validate_username(self, value):
+        username = value.strip()
+        if not username:
+            raise serializers.ValidationError("Username cannot be blank.")
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return username
+
+    def create(self, validated_data):
+        name = validated_data['name'].strip()
+        username = validated_data['username'].strip()
+        password = validated_data['password']
+        email = validated_data.get('email', '').strip()
+        if not email:
+            email = getattr(settings, 'FIRM_EMAIL', 'info@siwoloadvocates.com')
+
+        name_parts = name.split()
+        first_name = " ".join(name_parts[:-1]) if len(name_parts) > 1 else name_parts[0]
+        last_name = name_parts[-1] if len(name_parts) > 1 else ''
+
+        user = User.objects.create(
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            role=UserRole.ADMIN,
+            is_staff=True,
+            is_superuser=True,
+        )
+        user.set_password(password)
+        user.save()
+        return user

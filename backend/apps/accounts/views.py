@@ -16,8 +16,10 @@ from .serializers import (
     UserCreateUpdateSerializer,
     LoginSerializer,
     ChangePasswordSerializer,
+    SignUpSerializer,
 )
 from .permissions import IsAdministrator, IsInternalStaff
+from apps.audit.models import log_activity, AuditAction, AuditModule
 
 
 class HealthCheckView(APIView):
@@ -40,6 +42,57 @@ class FirmSettingsView(APIView):
 
     def get(self, request):
         return Response(get_firm_details())
+
+
+class SetupStatusView(APIView):
+    """
+    Returns platform setup status (whether an active user account exists).
+    Used to guide first-time platform users to sign up.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        has_users = User.objects.filter(is_active=True).exists()
+        return Response({
+            'has_users': has_users,
+            'firm_name': getattr(settings, 'FIRM_NAME', 'Siwolo P.O Law Advocates'),
+        }, status=status.HTTP_200_OK)
+
+
+class SignUpView(APIView):
+    """
+    Sign up endpoint for user registration.
+    Allows first-time or new user to set name, username, and password.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [LoginBurstRateThrottle]
+
+    def post(self, request):
+        serializer = SignUpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        # Extract client IP for audit trail
+        ip_addr = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR'))
+        if ip_addr and ',' in ip_addr:
+            ip_addr = ip_addr.split(',')[0].strip()
+
+        log_activity(
+            actor=user,
+            action=AuditAction.CREATE,
+            module=AuditModule.AUTH,
+            target_id=str(user.id),
+            target_repr=f"Signed up user: {user.username} ({user.full_name})",
+            details={'username': user.username, 'name': user.full_name},
+            ip_address=ip_addr,
+        )
+
+        return Response({
+            'message': 'Account created successfully. Please sign in with your username and password.',
+            'username': user.username,
+            'full_name': user.full_name,
+        }, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):

@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     LoginView,
     LogoutView,
+    SignUpView,
+    SetupStatusView,
     CurrentUserView,
     ChangePasswordView,
     FirmSettingsView,
@@ -14,6 +16,8 @@ router.register(r'', UserViewSet, basename='user')
 
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='auth-login'),
+    path('auth/signup/', SignUpView.as_view(), name='auth-signup'),
+    path('auth/setup-status/', SetupStatusView.as_view(), name='auth-setup-status'),
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', CurrentUserView.as_view(), name='auth-me'),
     path('auth/change-password/', ChangePasswordView.as_view(), name='auth-change-password'),
