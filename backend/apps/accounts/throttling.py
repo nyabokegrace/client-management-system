@@ -15,3 +15,32 @@ class LoginBurstRateThrottle(SimpleRateThrottle):
             'scope': self.scope,
             'ident': ident
         }
+
+
+class VerifyCodeRateThrottle(SimpleRateThrottle):
+    """
+    Limits 2FA and verification code verification attempts.
+    """
+    scope = 'verify_code'
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': ident
+        }
+
+
+class ResendCodeRateThrottle(SimpleRateThrottle):
+    """
+    Limits code resend requests per IP address.
+    """
+    scope = 'resend_code'
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': ident
+        }
+

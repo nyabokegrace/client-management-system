@@ -12,6 +12,16 @@ class AuditAction(models.TextChoices):
     DOWNLOAD = 'DOWNLOAD', 'Document Downloaded'
     STATUS_CHANGE = 'STATUS_CHANGE', 'Status Changed'
     ASSIGNMENT = 'ASSIGNMENT', 'Reassigned'
+    # Sign-in and authentication lifecycle events
+    PASSWORD_ACCEPTED = 'PASSWORD_ACCEPTED', 'Password Accepted'
+    CODE_SENT = 'CODE_SENT', 'Code Sent'
+    CODE_FAILED = 'CODE_FAILED', 'Code Failed'
+    CODE_VERIFIED = 'CODE_VERIFIED', 'Code Verified'
+    SIGN_IN_SUCCEEDED = 'SIGN_IN_SUCCEEDED', 'Sign-in Succeeded'
+    CHALLENGE_LOCKED = 'CHALLENGE_LOCKED', 'Challenge Locked'
+    SIGN_OUT = 'SIGN_OUT', 'Sign-out'
+    RECOVERY_CODE_USED = 'RECOVERY_CODE_USED', 'Recovery Code Used'
+    PASSWORD_RESET = 'PASSWORD_RESET', 'Password Reset'
 
 
 class AuditModule(models.TextChoices):
@@ -60,12 +70,13 @@ class AuditLog(models.Model):
         return f"[{self.created_at:%Y-%m-%d %H:%M}] {self.actor_name or 'System'} {self.action} on {self.module} ({self.target_repr})"
 
 
-def log_activity(actor, action, module, target_id='', target_repr='', details=None, ip_address=None):
+def log_activity(actor, action, module, target_id='', target_repr='', details=None, ip_address=None, actor_name=None):
     """
     Utility helper to record an immutable audit log entry.
     """
     try:
-        actor_name = actor.full_name if (actor and hasattr(actor, 'full_name')) else (str(actor) if actor else 'System')
+        if not actor_name:
+            actor_name = actor.full_name if (actor and hasattr(actor, 'full_name')) else (str(actor) if actor else 'System')
         AuditLog.objects.create(
             actor=actor if (actor and getattr(actor, 'is_authenticated', False)) else None,
             actor_name=actor_name,

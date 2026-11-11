@@ -86,18 +86,48 @@ class ApiClient {
     },
     login: async (credentials: { username: string; password: string }) => {
       const data = await this.request<{
-        token: string;
-        user: User;
-        message: string;
+        requires_2fa?: boolean;
+        challenge_id?: string;
+        email_masked?: string;
+        expires_in_seconds?: number;
+        seconds_until_resend?: number;
+        token?: string;
+        user?: User;
+        message?: string;
       }>('/auth/login/', {
         method: 'POST',
         body: JSON.stringify(credentials),
+      });
+      if (data.token && data.user && typeof window !== 'undefined') {
+        localStorage.setItem('siwolo_token', data.token);
+        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
+      }
+      return data;
+    },
+    verifyCode: async (challenge_id: string, code: string) => {
+      const data = await this.request<{
+        token: string;
+        user: User;
+        message: string;
+      }>('/auth/verify-code/', {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id, code }),
       });
       if (typeof window !== 'undefined') {
         localStorage.setItem('siwolo_token', data.token);
         localStorage.setItem('siwolo_user', JSON.stringify(data.user));
       }
       return data;
+    },
+    resendCode: async (challenge_id: string) => {
+      return this.request<{
+        message: string;
+        expires_in_seconds: number;
+        seconds_until_resend: number;
+      }>('/auth/resend-code/', {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id }),
+      });
     },
     logout: async () => {
       try {

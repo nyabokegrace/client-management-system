@@ -15,6 +15,11 @@ import {
   CheckCircle2,
   UserPlus,
   Sparkles,
+  ShieldCheck,
+  Clock,
+  RotateCw,
+  ArrowLeft,
+  Mail,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 
@@ -25,10 +30,19 @@ export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [isFirstTime, setIsFirstTime] = useState(false);
 
-  // Sign In state
+  // Sign In: Step 1 (Credentials) vs Step 2 (2FA Code)
+  const [loginStep, setLoginStep] = useState<1 | 2>(1);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Step 2: 2FA State
+  const [challengeId, setChallengeId] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [countdown, setCountdown] = useState(0);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
 
   // Sign Up state
   const [signupName, setSignupName] = useState('');
@@ -69,7 +83,26 @@ export default function LoginPage() {
       });
   }, [router]);
 
-  // Handle Sign In
+  // Tick countdown timer for 2FA code and resend cooldown
+  useEffect(() => {
+    if (loginStep !== 2) return;
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [loginStep]);
+
+  // Format seconds as MM:SS
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Handle Sign In: Step 1 (Username & Password)
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -77,8 +110,19 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await api.auth.login({ username, password });
-      router.push('/');
+      const res = await api.auth.login({ username, password });
+      if (res.requires_2fa && res.challenge_id) {
+        setChallengeId(res.challenge_id);
+        setMaskedEmail(res.email_masked || '');
+        setCountdown(res.expires_in_seconds || 600);
+        setResendCooldown(res.seconds_until_resend || 60);
+        setVerificationCode('');
+        setIsLocked(false);
+        setLoginStep(2);
+      } else {
+        // Fallback if 2FA is disabled on server
+        router.push('/');
+      }
     } catch (err: unknown) {
       setError(
         err instanceof Error
@@ -90,13 +134,74 @@ export default function LoginPage() {
     }
   };
 
+  // Handle Sign In: Step 2 (Verify 6-digit Code)
+  const handleVerifyCodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    const codeToVerify = verificationCode.trim();
+    if (codeToVerify.length !== 6) {
+      setError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    if (countdown === 0) {
+      setError('This verification code has expired. Please request a new code.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await api.auth.verifyCode(challengeId, codeToVerify);
+      router.push('/');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Invalid verification code.';
+      setError(msg);
+      if (msg.toLowerCase().includes('locked')) {
+        setIsLocked(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend 2FA verification code
+  const handleResendCode = async () => {
+    if (resendCooldown > 0 || loading || isLocked) return;
+
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+
+    try {
+      const res = await api.auth.resendCode(challengeId);
+      setCountdown(res.expires_in_seconds || 600);
+      setResendCooldown(res.seconds_until_resend || 60);
+      setVerificationCode('');
+      setSuccess('A new verification code has been sent to your email.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not resend code. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Back from 2FA to Step 1
+  const handleBackToCredentials = () => {
+    setLoginStep(1);
+    setVerificationCode('');
+    setError(null);
+    setSuccess(null);
+  };
+
   // Handle Sign Up
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    // Validation
     if (!signupName.trim()) {
       setError('Please provide your full legal name.');
       return;
@@ -126,19 +231,17 @@ export default function LoginPage() {
         password: signupPassword,
       });
 
-      // Populate login form with newly registered credentials
       setUsername(signupUsername.trim());
       setPassword(signupPassword);
 
-      // Reset signup inputs
       setSignupName('');
       setSignupUsername('');
       setSignupPassword('');
       setSignupConfirmPassword('');
       setIsFirstTime(false);
 
-      // Switch to login tab with success alert
       setMode('login');
+      setLoginStep(1);
       setSuccess(
         `Account created successfully for ${res.full_name || 'you'}! Please sign in below using your username and password.`
       );
@@ -155,6 +258,7 @@ export default function LoginPage() {
 
   const switchMode = (newMode: 'login' | 'signup') => {
     setMode(newMode);
+    setLoginStep(1);
     setError(null);
     setSuccess(null);
   };
@@ -195,36 +299,38 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Tab Switcher */}
-        <div className="flex border-b border-[#E5E7EB] mb-6">
-          <button
-            type="button"
-            onClick={() => switchMode('login')}
-            className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
-              mode === 'login'
-                ? 'border-black text-[#111111]'
-                : 'border-transparent text-[#6B7280] hover:text-[#111111]'
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => switchMode('signup')}
-            className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 flex items-center justify-center space-x-1.5 ${
-              mode === 'signup'
-                ? 'border-black text-[#111111]'
-                : 'border-transparent text-[#6B7280] hover:text-[#111111]'
-            }`}
-          >
-            <span>Sign Up</span>
-            {isFirstTime && (
-              <span className="bg-black text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                NEW
-              </span>
-            )}
-          </button>
-        </div>
+        {/* Tab Switcher (Visible in Step 1) */}
+        {loginStep === 1 && (
+          <div className="flex border-b border-[#E5E7EB] mb-6">
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
+                mode === 'login'
+                  ? 'border-black text-[#111111]'
+                  : 'border-transparent text-[#6B7280] hover:text-[#111111]'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('signup')}
+              className={`flex-1 pb-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 flex items-center justify-center space-x-1.5 ${
+                mode === 'signup'
+                  ? 'border-black text-[#111111]'
+                  : 'border-transparent text-[#6B7280] hover:text-[#111111]'
+              }`}
+            >
+              <span>Sign Up</span>
+              {isFirstTime && (
+                <span className="bg-black text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+                  NEW
+                </span>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* Success Alert */}
         {success && (
@@ -242,8 +348,10 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Sign In Form */}
-        {mode === 'login' && (
+        {/* ================================================================= */}
+        {/* SIGN IN: STEP 1 (Username & Password) */}
+        {/* ================================================================= */}
+        {mode === 'login' && loginStep === 1 && (
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1">
@@ -299,7 +407,7 @@ export default function LoginPage() {
                 'Authenticating...'
               ) : (
                 <>
-                  Sign In to Portal
+                  Continue
                   <ArrowRight className="w-3.5 h-3.5 ml-2" />
                 </>
               )}
@@ -317,7 +425,99 @@ export default function LoginPage() {
           </form>
         )}
 
-        {/* Sign Up Form */}
+        {/* ================================================================= */}
+        {/* SIGN IN: STEP 2 (Two-Factor 6-Digit Code) */}
+        {/* ================================================================= */}
+        {mode === 'login' && loginStep === 2 && (
+          <form onSubmit={handleVerifyCodeSubmit} className="space-y-4">
+            <div className="text-center mb-4">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-black mb-2">
+                <ShieldCheck className="w-5 h-5 text-black" />
+              </div>
+              <h2 className="text-sm font-bold text-[#111111]">Two-Factor Verification</h2>
+              <div className="flex items-center justify-center text-xs text-[#6B7280] mt-1 space-x-1">
+                <Mail className="w-3.5 h-3.5 text-gray-400" />
+                <span>Code sent to:</span>
+                <span className="font-semibold text-gray-800">{maskedEmail}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#374151] uppercase tracking-wider mb-1 text-center">
+                6-Digit Security Code
+              </label>
+              <input
+                type="text"
+                required
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={verificationCode}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setVerificationCode(val);
+                }}
+                placeholder="000000"
+                className="w-full py-2.5 px-4 text-center text-2xl font-mono tracking-widest bg-white border border-[#E5E7EB] rounded focus:outline-none focus:border-black transition-colors"
+              />
+            </div>
+
+            {/* Countdown timer */}
+            <div className="flex items-center justify-between text-xs text-[#6B7280]">
+              <div className="flex items-center space-x-1">
+                <Clock className="w-3.5 h-3.5" />
+                {countdown > 0 ? (
+                  <span>Expires in: <strong className="text-gray-900">{formatTime(countdown)}</strong></span>
+                ) : (
+                  <span className="text-red-600 font-semibold">Code expired</span>
+                )}
+              </div>
+
+              {/* Resend button */}
+              <button
+                type="button"
+                disabled={resendCooldown > 0 || loading || isLocked}
+                onClick={handleResendCode}
+                className="inline-flex items-center text-xs font-medium text-black hover:underline disabled:opacity-50 disabled:no-underline transition-colors"
+              >
+                <RotateCw className={`w-3 h-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || verificationCode.length !== 6 || isLocked || countdown === 0}
+              className="w-full mt-2 py-2.5 px-4 bg-[#111111] hover:bg-black text-white text-xs font-semibold rounded uppercase tracking-wider flex items-center justify-center transition-colors disabled:opacity-50"
+            >
+              {loading ? (
+                'Verifying Code...'
+              ) : (
+                <>
+                  Verify &amp; Sign In
+                  <ArrowRight className="w-3.5 h-3.5 ml-2" />
+                </>
+              )}
+            </button>
+
+            {/* Back link */}
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={handleBackToCredentials}
+                className="inline-flex items-center text-xs text-[#6B7280] hover:text-black transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                Back to Sign In
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ================================================================= */}
+        {/* SIGN UP FORM */}
+        {/* ================================================================= */}
         {mode === 'signup' && (
           <form onSubmit={handleSignupSubmit} className="space-y-4">
             <div>
@@ -337,7 +537,7 @@ export default function LoginPage() {
                 />
               </div>
               <p className="text-[11px] text-[#6B7280] mt-1">
-                Your name as Principal Advocate & Founder
+                Your name as Principal Advocate &amp; Founder
               </p>
             </div>
 
@@ -425,7 +625,7 @@ export default function LoginPage() {
               ) : (
                 <>
                   <UserPlus className="w-3.5 h-3.5 mr-2" />
-                  Sign Up & Continue
+                  Sign Up &amp; Continue
                 </>
               )}
             </button>

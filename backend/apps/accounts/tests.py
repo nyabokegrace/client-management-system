@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from .models import User, UserRole, LoginChallenge, ChallengePurpose
+from apps.audit.models import AuditLog, AuditAction
 from .emails import (
     generate_six_digit_code,
     hash_code,
@@ -46,12 +47,13 @@ class AccountsAuthenticationTests(TestCase):
         cache.clear()
 
     def test_login_success(self):
-        url = reverse('auth-login')
-        response = self.client.post(url, {'username': 'admin_test', 'password': 'Password123!'}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('token', response.data)
-        self.assertEqual(response.data['user']['username'], 'admin_test')
-        self.assertEqual(response.data['user']['role'], UserRole.ADMIN)
+        with self.settings(REQUIRE_2FA=False):
+            url = reverse('auth-login')
+            response = self.client.post(url, {'username': 'admin_test', 'password': 'Password123!'}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertIn('token', response.data)
+            self.assertEqual(response.data['user']['username'], 'admin_test')
+            self.assertEqual(response.data['user']['role'], UserRole.ADMIN)
 
     def test_login_invalid_credentials(self):
         url = reverse('auth-login')
@@ -179,16 +181,17 @@ class AccountsAuthenticationTests(TestCase):
         self.assertTrue(created_user.is_superuser)
         self.assertTrue(created_user.check_password('StrongSecurePassword@2026'))
 
-        # Log in with the exact same username and password used to sign up
-        login_url = reverse('auth-login')
-        login_response = self.client.post(login_url, {
-            'username': 'siwolo_counsel',
-            'password': 'StrongSecurePassword@2026',
-        }, format='json')
-        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
-        self.assertIn('token', login_response.data)
-        self.assertEqual(login_response.data['user']['username'], 'siwolo_counsel')
-        self.assertEqual(login_response.data['user']['full_name'], 'Peter O. Siwolo')
+        # Log in with the exact same username and password used to sign up (with REQUIRE_2FA=False for direct token check)
+        with self.settings(REQUIRE_2FA=False):
+            login_url = reverse('auth-login')
+            login_response = self.client.post(login_url, {
+                'username': 'siwolo_counsel',
+                'password': 'StrongSecurePassword@2026',
+            }, format='json')
+            self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+            self.assertIn('token', login_response.data)
+            self.assertEqual(login_response.data['user']['username'], 'siwolo_counsel')
+            self.assertEqual(login_response.data['user']['full_name'], 'Peter O. Siwolo')
 
     def test_signup_duplicate_username(self):
         url = reverse('auth-signup')
@@ -392,5 +395,181 @@ class StageAEmailAndChallengeTests(TestCase):
         self.assertIsNone(challenge)
         self.assertFalse(sent_ok)
         self.assertIn('limit reached', msg.lower())
+
+
+class StageBTwoFactorAuthTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        mail.outbox.clear()
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='peter_siwolo',
+            email='peter@siwoloadvocates.com',
+            password='Password123!',
+            first_name='Peter',
+            last_name='Siwolo',
+            role=UserRole.ADMIN
+        )
+
+    def tearDown(self):
+        cache.clear()
+        mail.outbox.clear()
+
+    def test_login_when_2fa_enabled_does_not_issue_token_and_sends_code(self):
+        login_url = reverse('auth-login')
+        response = self.client.post(login_url, {
+            'username': 'peter_siwolo',
+            'password': 'Password123!'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data.get('requires_2fa'))
+        # Token MUST NOT be issued before code verification
+        self.assertNotIn('token', response.data)
+        self.assertIn('challenge_id', response.data)
+        self.assertEqual(response.data['email_masked'], 'p***@siwoloadvocates.com')
+        self.assertGreater(response.data['expires_in_seconds'], 0)
+
+        # Confirm email was delivered
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("Your Siwolo CMS verification code", mail.outbox[0].subject)
+
+        # Confirm audit logs: password accepted, code sent
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.PASSWORD_ACCEPTED, actions)
+        self.assertIn(AuditAction.CODE_SENT, actions)
+
+    def test_verify_code_success_issues_token_and_audits(self):
+        # 1. Login to generate challenge
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'peter_siwolo',
+            'password': 'Password123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        # Extract code from sent email
+        sent_body = mail.outbox[0].body
+        # Code is 6 digits following 'code is: '
+        import re
+        code_match = re.search(r'code is:\s*(\d{6})', sent_body)
+        self.assertIsNotNone(code_match)
+        code = code_match.group(1)
+
+        # 2. Verify code
+        verify_url = reverse('auth-verify-code')
+        verify_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': code
+        }, format='json')
+
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+        self.assertIn('token', verify_res.data)
+        self.assertEqual(verify_res.data['user']['username'], 'peter_siwolo')
+
+        # Check audit log
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.CODE_VERIFIED, actions)
+        self.assertIn(AuditAction.SIGN_IN_SUCCEEDED, actions)
+
+        # Challenge should now be consumed
+        challenge = LoginChallenge.objects.get(id=challenge_id)
+        self.assertTrue(challenge.is_consumed)
+
+        # Replaying code must fail
+        replay_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': code
+        }, format='json')
+        self.assertEqual(replay_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_verify_code_wrong_code(self):
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'peter_siwolo',
+            'password': 'Password123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        verify_url = reverse('auth-verify-code')
+        verify_res = self.client.post(verify_url, {
+            'challenge_id': challenge_id,
+            'code': '000000'
+        }, format='json')
+
+        self.assertEqual(verify_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid verification code', verify_res.data['error'])
+
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.CODE_FAILED, actions)
+
+    def test_verify_code_five_attempts_locks_challenge(self):
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'peter_siwolo',
+            'password': 'Password123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+
+        verify_url = reverse('auth-verify-code')
+        for _ in range(4):
+            res = self.client.post(verify_url, {'challenge_id': challenge_id, 'code': '999999'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertFalse(res.data.get('is_locked'))
+
+        # 5th attempt locks challenge
+        res5 = self.client.post(verify_url, {'challenge_id': challenge_id, 'code': '999999'}, format='json')
+        self.assertEqual(res5.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(res5.data.get('is_locked'))
+
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.CHALLENGE_LOCKED, actions)
+
+    def test_resend_code_endpoint(self):
+        login_url = reverse('auth-login')
+        login_res = self.client.post(login_url, {
+            'username': 'peter_siwolo',
+            'password': 'Password123!'
+        }, format='json')
+        challenge_id = login_res.data['challenge_id']
+        self.assertEqual(len(mail.outbox), 1)
+
+        resend_url = reverse('auth-resend-code')
+        # Immediate resend fails due to cooldown
+        resend_res = self.client.post(resend_url, {'challenge_id': challenge_id}, format='json')
+        self.assertEqual(resend_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('wait', resend_res.data['error'].lower())
+
+        # Backdate last_sent_at by 65 seconds
+        challenge = LoginChallenge.objects.get(id=challenge_id)
+        challenge.last_sent_at = timezone.now() - timedelta(seconds=65)
+        challenge.save(update_fields=['last_sent_at'])
+
+        # Resend succeeds
+        resend_ok = self.client.post(resend_url, {'challenge_id': challenge_id}, format='json')
+        self.assertEqual(resend_ok.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_logout_audit_logged(self):
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        logout_url = reverse('auth-logout')
+        res = self.client.post(logout_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        actions = list(AuditLog.objects.filter(actor=self.user).values_list('action', flat=True))
+        self.assertIn(AuditAction.SIGN_OUT, actions)
+
+    def test_audit_log_never_records_code_or_password(self):
+        # Trigger failed login and failed code attempt
+        login_url = reverse('auth-login')
+        self.client.post(login_url, {'username': 'peter_siwolo', 'password': 'SuperSecretPasswordXYZ'}, format='json')
+
+        # Check all audit logs
+        logs = AuditLog.objects.all()
+        for log in logs:
+            self.assertNotIn('SuperSecretPasswordXYZ', log.target_repr)
+            self.assertNotIn('SuperSecretPasswordXYZ', str(log.details))
+
 
 

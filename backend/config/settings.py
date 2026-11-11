@@ -155,6 +155,10 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'login': '5/minute',
+        'verify_code': '10/minute',
+        'resend_code': '5/minute',
+        'forgot_password': '5/minute',
+        'reset_password': '5/minute',
         'anon': '100/day',
         'user': '1000/day',
     },
