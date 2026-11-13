@@ -78,75 +78,38 @@ class ApiClient {
         setup_required: boolean;
         setup_enabled: boolean;
         firm_name: string;
+        advocate_title?: string;
       }>('/auth/setup-status/');
     },
     setup: async (data: { setup_code: string; name: string; email: string; password: string; username?: string }) => {
       return this.request<{
         message: string;
-        challenge_id: string;
-        target_email: string;
-        masked_email: string;
-        expires_in_seconds: number;
+        user_id?: number;
+        username?: string;
+        otpauth_url?: string;
       }>('/auth/setup/', {
         method: 'POST',
         body: JSON.stringify(data),
       });
     },
-    setupVerify: async (challenge_id: string, code: string) => {
-      const data = await this.request<{
-        message: string;
-        recovery_codes: string[];
+    setupConfirm: async (data: { code: string; user_id?: number; username?: string }) => {
+      const res = await this.request<{
         token: string;
         user: User;
-      }>('/auth/setup/verify/', {
+        recovery_codes: string[];
+        message: string;
+      }>('/auth/setup/confirm/', {
         method: 'POST',
-        body: JSON.stringify({ challenge_id, code }),
+        body: JSON.stringify(data),
       });
-      if (data.token && data.user && typeof window !== 'undefined') {
-        localStorage.setItem('siwolo_token', data.token);
-        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
+      if (res.token && res.user && typeof window !== 'undefined') {
+        localStorage.setItem('siwolo_token', res.token);
+        localStorage.setItem('siwolo_user', JSON.stringify(res.user));
       }
-      return data;
-    },
-    requestEmailChange: async (data: { current_password: string; new_email: string }) => {
-      return this.request<{
-        message: string;
-        challenge_id: string;
-        new_email: string;
-        masked_email: string;
-        expires_in_seconds: number;
-      }>('/auth/email-change/request/', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    verifyEmailChange: async (challenge_id: string, code: string) => {
-      return this.request<{
-        message: string;
-        email: string;
-        user: User;
-      }>('/auth/email-change/verify/', {
-        method: 'POST',
-        body: JSON.stringify({ challenge_id, code }),
-      });
-    },
-    signup: async (data: { name: string; username: string; password: string; email?: string }) => {
-      return this.request<{
-        message: string;
-        username: string;
-        full_name: string;
-      }>('/auth/signup/', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
+      return res;
     },
     login: async (credentials: { username: string; password: string }) => {
       const data = await this.request<{
-        requires_2fa?: boolean;
-        challenge_id?: string;
-        email_masked?: string;
-        expires_in_seconds?: number;
-        seconds_until_resend?: number;
         token?: string;
         user?: User;
         message?: string;
@@ -155,38 +118,6 @@ class ApiClient {
         body: JSON.stringify(credentials),
       });
       if (data.token && data.user && typeof window !== 'undefined') {
-        localStorage.setItem('siwolo_token', data.token);
-        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
-      }
-      return data;
-    },
-    verifyCode: async (challenge_id: string, code: string) => {
-      const data = await this.request<{
-        token: string;
-        user: User;
-        message: string;
-      }>('/auth/verify-code/', {
-        method: 'POST',
-        body: JSON.stringify({ challenge_id, code }),
-      });
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('siwolo_token', data.token);
-        localStorage.setItem('siwolo_user', JSON.stringify(data.user));
-      }
-      return data;
-    },
-    verifyRecoveryCode: async (challenge_id: string, recovery_code: string) => {
-      const data = await this.request<{
-        token: string;
-        user: User;
-        remaining_codes: number;
-        warning?: string;
-        message: string;
-      }>('/auth/verify-recovery-code/', {
-        method: 'POST',
-        body: JSON.stringify({ challenge_id, recovery_code }),
-      });
-      if (typeof window !== 'undefined') {
         localStorage.setItem('siwolo_token', data.token);
         localStorage.setItem('siwolo_user', JSON.stringify(data.user));
       }
@@ -204,28 +135,6 @@ class ApiClient {
     },
     getRecoveryCodesCount: async () => {
       return this.request<{ remaining: number }>('/auth/recovery-codes/count/');
-    },
-    forgotPassword: async (identifier: string) => {
-      return this.request<{ message: string }>('/auth/forgot-password/', {
-        method: 'POST',
-        body: JSON.stringify({ identifier }),
-      });
-    },
-    resetPassword: async (data: { identifier: string; code: string; new_password: string }) => {
-      return this.request<{ message: string }>('/auth/reset-password/', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    resendCode: async (challenge_id: string) => {
-      return this.request<{
-        message: string;
-        expires_in_seconds: number;
-        seconds_until_resend: number;
-      }>('/auth/resend-code/', {
-        method: 'POST',
-        body: JSON.stringify({ challenge_id }),
-      });
     },
     logout: async () => {
       try {

@@ -7,6 +7,8 @@ from .models import User, UserRole
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     recovery_codes_remaining = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    advocate_title = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -17,6 +19,8 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'full_name',
+            'title',
+            'advocate_title',
             'role',
             'phone_number',
             'is_active',
@@ -24,12 +28,26 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'full_name', 'recovery_codes_remaining']
+        read_only_fields = [
+            'id',
+            'created_at',
+            'updated_at',
+            'full_name',
+            'recovery_codes_remaining',
+            'title',
+            'advocate_title',
+        ]
 
     def get_recovery_codes_remaining(self, obj):
         if hasattr(obj, 'recovery_codes'):
             return obj.recovery_codes.filter(consumed_at__isnull=True).count()
         return 0
+
+    def get_title(self, obj):
+        return getattr(settings, 'ADVOCATE_TITLE', 'Principal Advocate and Founder')
+
+    def get_advocate_title(self, obj):
+        return getattr(settings, 'ADVOCATE_TITLE', 'Principal Advocate and Founder')
 
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
@@ -39,9 +57,8 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         read_only_fields = ['email']
 
 
-
 class UserCreateUpdateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    password = serializers.CharField(write_only=True, required=False, min_length=12)
 
     class Meta:
         model = User
@@ -97,56 +114,10 @@ class LoginSerializer(serializers.Serializer):
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True, write_only=True)
-    new_password = serializers.CharField(required=True, write_only=True, min_length=8)
+    new_password = serializers.CharField(required=True, write_only=True, min_length=12)
 
     def validate_old_password(self, value):
         user = self.context['request'].user
         if not user.check_password(value):
             raise serializers.ValidationError('Current password does not match.')
         return value
-
-
-class SignUpSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255, required=True)
-    username = serializers.CharField(max_length=150, required=True)
-    password = serializers.CharField(write_only=True, required=True, min_length=8)
-    email = serializers.EmailField(required=False, allow_blank=True)
-
-    def validate_name(self, value):
-        name = value.strip()
-        if not name:
-            raise serializers.ValidationError("Name cannot be blank.")
-        return name
-
-    def validate_username(self, value):
-        username = value.strip()
-        if not username:
-            raise serializers.ValidationError("Username cannot be blank.")
-        if User.objects.filter(username__iexact=username).exists():
-            raise serializers.ValidationError("A user with this username already exists.")
-        return username
-
-    def create(self, validated_data):
-        name = validated_data['name'].strip()
-        username = validated_data['username'].strip()
-        password = validated_data['password']
-        email = validated_data.get('email', '').strip()
-        if not email:
-            email = getattr(settings, 'FIRM_EMAIL', 'info@siwoloadvocates.com')
-
-        name_parts = name.split()
-        first_name = " ".join(name_parts[:-1]) if len(name_parts) > 1 else name_parts[0]
-        last_name = name_parts[-1] if len(name_parts) > 1 else ''
-
-        user = User.objects.create(
-            username=username,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            role=UserRole.ADMIN,
-            is_staff=True,
-            is_superuser=True,
-        )
-        user.set_password(password)
-        user.save()
-        return user

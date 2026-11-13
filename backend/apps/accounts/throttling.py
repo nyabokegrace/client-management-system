@@ -19,23 +19,9 @@ class LoginBurstRateThrottle(SimpleRateThrottle):
 
 class VerifyCodeRateThrottle(SimpleRateThrottle):
     """
-    Limits 2FA and verification code verification attempts.
+    Limits verification attempts.
     """
     scope = 'verify_code'
-
-    def get_cache_key(self, request, view):
-        ident = self.get_ident(request)
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }
-
-
-class ResendCodeRateThrottle(SimpleRateThrottle):
-    """
-    Limits code resend requests per IP address.
-    """
-    scope = 'resend_code'
 
     def get_cache_key(self, request, view):
         ident = self.get_ident(request)
@@ -57,19 +43,3 @@ class ForgotPasswordRateThrottle(SimpleRateThrottle):
             'scope': self.scope,
             'ident': ident
         }
-
-
-class ResetPasswordRateThrottle(SimpleRateThrottle):
-    """
-    Limits password reset attempts from a given IP address.
-    """
-    scope = 'reset_password'
-
-    def get_cache_key(self, request, view):
-        ident = self.get_ident(request)
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }
-
-
